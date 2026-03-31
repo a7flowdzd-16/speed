@@ -1,98 +1,251 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, StatusBar } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+// 🌟 بيانات تجريبية (Mock Data) إلى أن نربط بـ Supabase 🚀
+const MOCK_RUNS = [
+  { id: '1', date: 'اليوم - مسائي', distance: '5.24', time: '28:45', pace: '5:29', color: '#FF4B2B' },
+  { id: '2', date: 'أمس - صباحي', distance: '10.01', time: '55:10', pace: '5:30', color: '#1E90FF' },
+  { id: '3', date: 'منذ يومين', distance: '4.50', time: '24:00', pace: '5:20', color: '#FF4B2B' },
+];
 
-export default function HomeScreen() {
+export default function DashboardScreen() {
+  const router = useRouter();
+
+  // تصميم كل بطاقة نشاط سابق (Strava Feed Card)
+  const renderRunCard = ({ item }: { item: typeof MOCK_RUNS[0] }) => (
+    <View style={styles.card}>
+      {/* هيدر النشاط */}
+      <View style={styles.cardHeader}>
+        <View style={styles.userInfo}>
+          <View style={styles.avatarPlaceholder}>
+            <Ionicons name="person" size={20} color="#fff" />
+          </View>
+          <View>
+            <Text style={styles.userName}>أيمن (أنت)</Text>
+            <Text style={styles.runDate}>{item.date}</Text>
+          </View>
+        </View>
+        <Ionicons name="ellipsis-horizontal" size={24} color="#888" />
+      </View>
+
+      {/* تفاصيل الجري */}
+      <Text style={styles.runTitle}>جري اعتيادي - {item.distance} كم</Text>
+      
+      <View style={styles.cardMetrics}>
+        <View style={styles.metric}>
+          <Text style={styles.metricLabel}>المسافة</Text>
+          <Text style={styles.metricVal}>{item.distance} <Text style={styles.metricUnit}>كم</Text></Text>
+        </View>
+        <View style={styles.metric}>
+          <Text style={styles.metricLabel}>الزمن</Text>
+          <Text style={styles.metricVal}>{item.time} <Text style={styles.metricUnit}>دقيقة</Text></Text>
+        </View>
+        <View style={styles.metric}>
+          <Text style={styles.metricLabel}>البيس (Pace)</Text>
+          <Text style={styles.metricVal}>{item.pace} <Text style={styles.metricUnit}>/كم</Text></Text>
+        </View>
+      </View>
+
+      {/* خريطة مصغرة وهمية (Map Snapshot Placeholder) */}
+      <View style={[styles.mapPlaceholder, { borderColor: item.color }]}>
+        <Ionicons name="map" size={50} color={item.color} style={{ opacity: 0.3 }} />
+        <Text style={{ color: item.color, marginTop: 10, fontWeight: '700', opacity: 0.5 }}>مسار الجري (خريطة)</Text>
+      </View>
+
+      {/* أزرار تفاعل (إعجاب وتعليق) */}
+      <View style={styles.interactionRow}>
+        <TouchableOpacity style={styles.actionBtn}>
+          <Ionicons name="heart-outline" size={24} color="#ccc" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn}>
+          <Ionicons name="chatbubble-outline" size={22} color="#ccc" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      
+      {/* 🌟 القسم الأول: الهيدر والملخص (Stats Summary) */}
+      <View style={styles.header}>
+        <Text style={styles.greeting}>مرحباً بك مجدداً 👋</Text>
+        <Ionicons name="notifications-outline" size={28} color="#fff" />
+      </View>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      <View style={styles.statsContainer}>
+        <Text style={styles.statsSubtitle}>إجمالي أرقامك هذا الأسبوع</Text>
+        <Text style={styles.statsMainNum}>19.75 <Text style={styles.statsMainUnit}>كم</Text></Text>
+        
+        <View style={styles.statsSubRow}>
+          <Text style={styles.statsSubText}>⏰ الوقت: 1:48:00</Text>
+          <Text style={styles.statsSubText}>🔥 السعرات: 1,205</Text>
+        </View>
+      </View>
+
+      {/* 🌟 القسم الثاني: سجل النشاطات (History Feed) */}
+      <Text style={styles.feedTitle}>نشاطاتك الأخيرة</Text>
+      <FlatList
+        data={MOCK_RUNS}
+        keyExtractor={item => item.id}
+        renderItem={renderRunCard}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }} // مساحة لزر التسجيل السفلي
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    marginBottom: 20,
+  },
+  greeting: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  statsContainer: {
+    backgroundColor: '#111',
+    marginHorizontal: 15,
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+    marginBottom: 25,
+  },
+  statsSubtitle: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  statsMainNum: {
+    color: '#FF4B2B',
+    fontSize: 55,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  statsMainUnit: {
+    fontSize: 22,
+    color: '#ccc',
+  },
+  statsSubRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    paddingTop: 15,
+  },
+  statsSubText: {
+    color: '#ccc',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  feedTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
+    paddingHorizontal: 20,
+    marginBottom: 15,
+  },
+  card: {
+    backgroundColor: '#111',
+    marginBottom: 15,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#222',
+    paddingVertical: 15,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 15,
+    marginBottom: 10,
+  },
+  userInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  avatarPlaceholder: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#333',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  userName: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
   },
+  runDate: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  runTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    paddingHorizontal: 15,
+    marginTop: 5,
+    marginBottom: 15,
+  },
+  cardMetrics: {
+    flexDirection: 'row',
+    paddingHorizontal: 15,
+    marginBottom: 15,
+  },
+  metric: {
+    marginRight: 35,
+  },
+  metricLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  metricVal: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  metricUnit: {
+    fontSize: 12,
+    color: '#888',
+  },
+  mapPlaceholder: {
+    height: 180,
+    backgroundColor: '#0a0a0a',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  interactionRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 15,
+    marginTop: 5,
+  },
+  actionBtn: {
+    marginRight: 20,
+  }
 });
