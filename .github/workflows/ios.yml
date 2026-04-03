@@ -4,7 +4,6 @@ on:
   workflow_dispatch: 
 
 env:
-  # هذا السطر يخفي التحذير المزعج بخصوص Node.js 20 في نهاية السجل
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -19,6 +18,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Fix Node path for Xcode
+        # XCode مسارات النظام أحياناً تتجاهل إعدادات Node في سيرفرات جيت هاب، 
+        # هذا السطر يحل مشكلة الـ (Exit Code 65) المتعلقة بسكربتات React Native المخفية.
+        run: |
+          sudo ln -s $(which node) /usr/local/bin/node || true
+          sudo ln -s $(which npm) /usr/local/bin/npm || true
+          sudo ln -s $(which npx) /usr/local/bin/npx || true
 
       - name: Install dependencies
         run: npm install
@@ -38,8 +45,11 @@ jobs:
           SCHEME=$(echo $WORKSPACE | sed 's/\.xcworkspace//')
           echo "Building Workspace: $WORKSPACE with Scheme: $SCHEME"
           
-          # إضافة CODE_SIGNING_IDENTITY="" لضمان عدم بحث Xcode عن أي شهادة إطلاقاً
-          # وإضافة COMPILER_INDEX_STORE_ENABLE=NO لتقليل استهلاك الذاكرة وتجنب أخطاء البناء الوهمية
+          # تثبيت أداة لتوضيح الأخطاء في حال الفشل
+          gem install xcpretty
+          
+          # تشغيل البناء مع ربط الأداة لتنظيف المخرجات وإظهار الخطأ الحقيقي
+          set -o pipefail
           xcodebuild build -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Release \
@@ -49,11 +59,11 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             PROVISIONING_PROFILE_SPECIFIER="" \
-            COMPILER_INDEX_STORE_ENABLE=NO
+            COMPILER_INDEX_STORE_ENABLE=NO | xcpretty
 
       - name: Package IPA
         run: |
-          mkdir Payload
+          mkdir -p Payload
           find ios/build/Build/Products/Release-iphoneos -name "*.app" -exec cp -r {} Payload/ \;
           zip -r run-tracker.ipa Payload
 
