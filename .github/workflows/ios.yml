@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22' # استخدم إصدار أحدث لتجنب التنبيهات
 
       - name: Install dependencies
         run: npm install
@@ -34,13 +34,24 @@ jobs:
           WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
           SCHEME=$(echo $WORKSPACE | sed 's/\.xcworkspace//')
           echo "Building Workspace: $WORKSPACE with Scheme: $SCHEME"
-          xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+          
+          # استخراج التطبيق وتجاوز حماية آبل بالكامل
+          # أضفنا علامات إضافية لتجاوز التوقيع بشكل أكثر صرامة
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Package IPA
         run: |
           mkdir Payload
-          # البحث عن ملف .app الناتج تلقائياً
-          cp -r ios/build/Build/Products/Release-iphoneos/*.app Payload/
+          # البحث عن ملف .app الناتج تلقائياً في مجلد الحزم
+          find ios/build/Build/Products/Release-iphoneos -name "*.app" -exec cp -r {} Payload/ \;
           zip -r run-tracker.ipa Payload
 
       - name: Upload IPA Artifact
