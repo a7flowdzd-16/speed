@@ -3,6 +3,10 @@ name: Build iOS IPA (Free Method)
 on:
   workflow_dispatch: 
 
+env:
+  # هذا السطر يخفي التحذير المزعج بخصوص Node.js 20 في نهاية السجل
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: macos-latest
@@ -14,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22' # استخدم إصدار أحدث لتجنب التنبيهات
+          node-version: '22'
 
       - name: Install dependencies
         run: npm install
@@ -30,27 +34,26 @@ jobs:
       - name: Build App (Unsigned)
         run: |
           cd ios
-          # اكتشاف اسم المشروع تلقائياً
           WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
           SCHEME=$(echo $WORKSPACE | sed 's/\.xcworkspace//')
           echo "Building Workspace: $WORKSPACE with Scheme: $SCHEME"
           
-          # استخراج التطبيق وتجاوز حماية آبل بالكامل
-          # أضفنا علامات إضافية لتجاوز التوقيع بشكل أكثر صرامة
-          xcodebuild -workspace "$WORKSPACE" \
+          # إضافة CODE_SIGNING_IDENTITY="" لضمان عدم بحث Xcode عن أي شهادة إطلاقاً
+          # وإضافة COMPILER_INDEX_STORE_ENABLE=NO لتقليل استهلاك الذاكرة وتجنب أخطاء البناء الوهمية
+          xcodebuild build -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            PROVISIONING_PROFILE_SPECIFIER=""
+            CODE_SIGNING_ALLOWED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
 
       - name: Package IPA
         run: |
           mkdir Payload
-          # البحث عن ملف .app الناتج تلقائياً في مجلد الحزم
           find ios/build/Build/Products/Release-iphoneos -name "*.app" -exec cp -r {} Payload/ \;
           zip -r run-tracker.ipa Payload
 
