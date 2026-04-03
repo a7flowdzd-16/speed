@@ -1,12 +1,10 @@
 name: Build iOS IPA (Free Method)
 
-# هذا السطر يجعلنا قادرين على تشغيل البناء يدوياً بضغطة زر
 on:
   workflow_dispatch: 
 
 jobs:
   build:
-    # نطلب من جيت هاب إعطاءنا جهاز ماك حقيقي مجاناً
     runs-on: macos-latest
 
     steps:
@@ -21,7 +19,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # سحر إكسبو لتحويل الكود إلى ملفات آيفون أصلية
       - name: Expo Prebuild
         run: npx expo prebuild --platform ios --clean
 
@@ -30,22 +27,22 @@ jobs:
           cd ios
           pod install
 
-      # استخراج التطبيق وتجاوز حماية آبل (بدون توقيع)
       - name: Build App (Unsigned)
         run: |
           cd ios
-          xcodebuild -workspace "runTracker.xcworkspace" -scheme "runTracker" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+          # اكتشاف اسم المشروع تلقائياً
+          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
+          SCHEME=$(echo $WORKSPACE | sed 's/\.xcworkspace//')
+          echo "Building Workspace: $WORKSPACE with Scheme: $SCHEME"
+          xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO
 
-      # تحويل مجلد التطبيق إلى ملف .ipa جاهز
       - name: Package IPA
         run: |
           mkdir Payload
-          # نسخ ملف التطبيق الناتج إلى مجلد Payload
+          # البحث عن ملف .app الناتج تلقائياً
           cp -r ios/build/Build/Products/Release-iphoneos/*.app Payload/
-          # ضغطه بصيغة ipa
           zip -r run-tracker.ipa Payload
 
-      # رفع الملف لكي تتمكن من تحميله
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
