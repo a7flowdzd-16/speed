@@ -1,33 +1,53 @@
-name: Build iOS IPA
+name: Build iOS IPA (Free Method)
 
+# هذا السطر يجعلنا قادرين على تشغيل البناء يدوياً بضغطة زر
 on:
-  workflow_dispatch:
+  workflow_dispatch: 
 
 jobs:
-  build-ios:
-    name: Build iOS Unsigned
+  build:
+    # نطلب من جيت هاب إعطاءنا جهاز ماك حقيقي مجاناً
     runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
-          channel: 'stable'
+          node-version: '18'
 
       - name: Install dependencies
-        run: flutter pub get
+        run: npm install
 
-      - name: Build iOS App (No Codesign)
+      # سحر إكسبو لتحويل الكود إلى ملفات آيفون أصلية
+      - name: Expo Prebuild
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods (iOS Dependencies)
         run: |
-          flutter build ios --release --no-codesign
-          mkdir -p Payload
-          mv build/ios/iphoneos/Runner.app Payload/
-          zip -qq -r a7flow_mobile.ipa Payload
+          cd ios
+          pod install
 
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
+      # استخراج التطبيق وتجاوز حماية آبل (بدون توقيع)
+      - name: Build App (Unsigned)
+        run: |
+          cd ios
+          xcodebuild -workspace "runTracker.xcworkspace" -scheme "runTracker" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+
+      # تحويل مجلد التطبيق إلى ملف .ipa جاهز
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          # نسخ ملف التطبيق الناتج إلى مجلد Payload
+          cp -r ios/build/Build/Products/Release-iphoneos/*.app Payload/
+          # ضغطه بصيغة ipa
+          zip -r run-tracker.ipa Payload
+
+      # رفع الملف لكي تتمكن من تحميله
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: a7flow-ios-app
-          path: a7flow_mobile.ipa
+          name: run-tracker-ipa
+          path: run-tracker.ipa
