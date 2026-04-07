@@ -1,0 +1,14 @@
+{
+  "name": "a7-live-backend",
+  "version": "1.0.0",
+  "description": "Live Streaming & Chat Server for A7 Flow App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-media-server": "^2.6.2",
+    "socket.io": "^4.7.5"
+  }
+}
