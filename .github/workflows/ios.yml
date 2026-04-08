@@ -1,0 +1,71 @@
+name: Build Nouble iOS IPA (Unsigned)
+
+on:
+  workflow_dispatch: 
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fix Node path for Xcode
+        run: |
+          sudo ln -s $(which node) /usr/local/bin/node || true
+          sudo ln -s $(which npm) /usr/local/bin/npm || true
+          sudo ln -s $(which npx) /usr/local/bin/npx || true
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Expo Prebuild
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods (iOS Dependencies)
+        run: |
+          cd ios
+          pod install
+
+      - name: Build App (Unsigned)
+        run: |
+          cd ios
+          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
+          SCHEME=$(echo $WORKSPACE | sed 's/\.xcworkspace//')
+          echo "Building Workspace: $WORKSPACE with Scheme: $SCHEME"
+          
+          # Install xcpretty for better logs
+          gem install xcpretty
+          
+          set -o pipefail
+          xcodebuild build -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            COMPILER_INDEX_STORE_ENABLE=NO | xcpretty
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          find ios/build/Build/Products/Release-iphoneos -name "*.app" -exec cp -r {} Payload/ \;
+          zip -r nouble-app.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nouble-ios-ipa
+          path: nouble-app.ipa
