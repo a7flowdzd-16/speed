@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-nodemediaclient/android/build.gradle b/node_modules/react-native-nodemediaclient/android/build.gradle
+index e3860b3..b0df359 100644
+--- a/node_modules/react-native-nodemediaclient/android/build.gradle
++++ b/node_modules/react-native-nodemediaclient/android/build.gradle
+@@ -38,7 +38,7 @@ def supportsNamespace() {
+ 
+ android {
+   if (supportsNamespace()) {
+-    namespace "cn.nodemediaclient"
++    namespace "cn.nodemedia.react_native_nodemediaclient"
+ 
+     sourceSets {
+       main {
