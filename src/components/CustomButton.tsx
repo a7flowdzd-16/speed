@@ -12,7 +12,7 @@ export const CustomButton = ({ title, onPress, loading }: Props) => {
   return (
     <TouchableOpacity style={styles.button} onPress={onPress} disabled={loading}>
       {loading ? (
-        <ActivityIndicator color={colors.text} />
+        <ActivityIndicator color="#000" />
       ) : (
         <Text style={styles.text}>{title}</Text>
       )}
@@ -23,20 +23,20 @@ export const CustomButton = ({ title, onPress, loading }: Props) => {
 const styles = StyleSheet.create({
   button: {
     backgroundColor: colors.primary,
-    paddingVertical: 16,
-    borderRadius: 30, // Rounded style like Snapchat
+    paddingVertical: 14,
+    borderRadius: 999, // Pill shape
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
   },
   text: {
-    color: colors.text,
+    color: '#000', // Always black text for the gold button
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '800',
   }
 });

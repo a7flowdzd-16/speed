@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
+import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { colors } from '../theme/colors';
 import { supabase } from '../lib/supabase';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export const LoginScreen = ({ navigation }: any) => {
   const [email, setEmail] = useState('');
@@ -12,15 +15,35 @@ export const LoginScreen = ({ navigation }: any) => {
 
   const onLogin = async () => {
     if (!email || !password) {
-      Alert.alert('تنبيه', 'يرجى إدخال البريد الإلكتروني وكلمة المرور');
+      Alert.alert('تنبيه', 'يرجى إدخال اسم Nouble أو البريد الإلكتروني');
       return;
     }
     
     setLoading(true);
+    let targetEmail = email;
+
+    if (!email.includes('@')) {
+      const cleanedUsername = email.trim().replace('@', '').toLowerCase();
+      const { data, error: userError } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('username', cleanedUsername)
+        .maybeSingle();
+
+      if (data?.email) {
+        targetEmail = data.email;
+      } else if (!data) {
+        Alert.alert('خطأ', 'اسم Nouble هذا غير موجود. يرجى التأكد من كتابته بشكل صحيح.');
+        setLoading(false);
+        return;
+      }
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: targetEmail.trim(),
       password,
     });
+
     setLoading(false);
 
     if (error) {
@@ -29,57 +52,102 @@ export const LoginScreen = ({ navigation }: any) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={styles.header}>
-          <Text style={styles.emoji}>👻</Text> 
-          <Text style={styles.title}>تسجيل الدخول</Text>
-          <Text style={styles.subtitle}>العودة إلى البث المباشر والمزادات</Text>
-        </View>
+    <View style={styles.container}>
+      {/* Background Gradients for Liquid Feel */}
+      <View style={StyleSheet.absoluteFill}>
+        <View style={styles.blackBackground} />
+        <LinearGradient
+          colors={['rgba(255, 252, 0, 0.08)', 'transparent']}
+          style={styles.lightLeakTop}
+        />
+        <LinearGradient
+          colors={['transparent', 'rgba(255, 215, 0, 0.05)']}
+          style={styles.lightLeakBottom}
+        />
+      </View>
 
-        <View style={styles.form}>
-          <CustomInput 
-            label="البريد الإلكتروني"
-            placeholder="example@email.com"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-          
-          <CustomInput 
-            label="كلمة المرور"
-            placeholder="أدخل كلمة المرور"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+      <SafeAreaView style={{ flex: 1 }}>
+        <KeyboardAvoidingView 
+          style={styles.keyboardView}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.header}>
+            <Image 
+              source={require('../../assets/nouble-svg.svg')} 
+              style={styles.logo} 
+              contentFit="contain"
+            />
+            <Text style={styles.title}>Welcome to Nouble</Text>
+            <Text style={styles.subtitle}>الوصول إلى أفخم المزادات الحية والمباشرة</Text>
+          </View>
 
-          <CustomButton 
-            title="دخول" 
-            onPress={onLogin} 
-            loading={loading}
-          />
-        </View>
+          <View style={styles.formGlass}>
+            <CustomInput 
+              label="Email or Nouble Name"
+              placeholder="Username or @email"
+              placeholderTextColor="rgba(255,255,255,0.3)"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            
+            <CustomInput 
+              label="Password"
+              placeholder="••••••••"
+              placeholderTextColor="rgba(255,255,255,0.3)"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>ليس لديك حساب؟ </Text>
-          <TouchableOpacity onPress={() => navigation.navigate('SignUp')} disabled={loading}>
-            <Text style={styles.footerLink}>إنشاء حساب جديد</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+            <TouchableOpacity style={styles.forgotPass}>
+              <Text style={styles.forgotText}>نسيت كلمة المرور؟</Text>
+            </TouchableOpacity>
+
+            <CustomButton 
+              title="دخول" 
+              onPress={onLogin} 
+              loading={loading}
+            />
+          </View>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>ليس لديك حساب؟ </Text>
+            <TouchableOpacity onPress={() => navigation.navigate('SignUp')} disabled={loading}>
+              <Text style={styles.footerLink}>إنشاء حساب جديد</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#000',
+  },
+  blackBackground: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+  },
+  lightLeakTop: {
+    position: 'absolute',
+    top: -100,
+    right: -100,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+  },
+  lightLeakBottom: {
+    position: 'absolute',
+    bottom: -150,
+    left: -150,
+    width: 400,
+    height: 400,
+    borderRadius: 200,
   },
   keyboardView: {
     flex: 1,
@@ -90,36 +158,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
-  emoji: {
-    fontSize: 50,
-    marginBottom: 10,
+  logo: {
+    width: 140,
+    height: 140,
+    marginBottom: 20,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
-    color: colors.text,
+    fontWeight: '900',
+    color: '#FFF',
     marginBottom: 8,
+    letterSpacing: 0.5,
   },
   subtitle: {
-    fontSize: 16,
-    color: colors.textSecondary,
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.5)',
+    textAlign: 'center',
   },
-  form: {
+  formGlass: {
+    borderRadius: 30,
+    padding: 4,
+  },
+  forgotPass: {
+    alignSelf: 'flex-end',
     marginBottom: 20,
+    marginRight: 4,
+  },
+  forgotText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 14,
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 20,
+    marginTop: 30,
   },
   footerText: {
-    color: colors.textSecondary,
+    color: 'rgba(255,255,255,0.4)',
     fontSize: 15,
   },
   footerLink: {
-    color: colors.text,
+    color: colors.primary,
     fontWeight: 'bold',
     fontSize: 15,
-    textDecorationLine: 'underline',
   }
 });

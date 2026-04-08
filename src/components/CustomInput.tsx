@@ -41,22 +41,23 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    fontWeight: 'bold',
-    color: colors.text,
+    fontWeight: '700',
+    color: colors.textSecondary,
     marginBottom: 8,
+    marginRight: 4,
   },
   input: {
-    backgroundColor: colors.inputBackground,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 20, // More rounded liquid feel
+    padding: 16,
     fontSize: 16,
-    color: colors.text,
+    color: '#FFF',
   },
   inputFocused: {
     borderColor: colors.primary,
-    backgroundColor: colors.background,
+    backgroundColor: 'rgba(255, 252, 0, 0.05)',
   },
   inputError: {
     borderColor: colors.error,

@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Text } from 'react-native';
+import { Image } from 'expo-image';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { PostCard } from '../components/PostCard';
+import { NotificationBell } from '../components/NotificationsModal';
 import { colors } from '../theme/colors';
 import { useAuth } from '../providers/AuthProvider';
 
@@ -9,23 +12,18 @@ export const HomeScreen = () => {
   const [posts, setPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const { user } = useAuth(); 
+  const [activePostId, setActivePostId] = useState<string | null>(null);
+  const [liveUsers, setLiveUsers] = useState<string[]>([]);
+  const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const fetchPosts = async () => {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('posts')
-        .select(`
-          *,
-          profiles:user_id (full_name, avatar_url)
-        `)
+        .select(`*, profiles:user_id(full_name, avatar_url)`)
         .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Error fetching posts:', error);
-      } else if (data) {
-        setPosts(data);
-      }
+      if (data) setPosts(data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -34,76 +32,88 @@ export const HomeScreen = () => {
     }
   };
 
-  useEffect(() => {
-    fetchPosts();
-  }, []);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchPosts();
+  const fetchLiveSessions = async () => {
+    const { data } = await supabase
+      .from('live_streams')
+      .select('user_id')
+      .eq('status', 'live');
+    if (data) setLiveUsers(data.map(d => d.user_id));
   };
 
-  // Mock data so you can see the UI immediately before setting up the Supabase tables
-  const displayPosts = posts.length > 0 ? posts : [
-    {
-      id: 'mock1',
-      user_id: user?.id || 'uid1',
-      title: 'مزاد ساعة فاخرة',
-      description: 'هذه سلسلة من أفضل الساعات الكلاسيكية. شاهد التفاصيل بالكامل لمعرفة سعر البدء. الساعة لم تلبس من قبل وهي جديدة تماماً وتم استيرادها خصيصاً لهذا المزاد. لا تفوتوا الفرصة!',
-      media_type: 'images',
-      media_urls: [
-        'https://images.unsplash.com/photo-1523170335258-f5ed11844a49?q=80&w=800',
-        'https://images.unsplash.com/photo-1542496658-e33a6d0d50f6?q=80&w=800'
-      ],
-      created_at: new Date().toISOString(),
-      profiles: { full_name: 'أحمد محمود' }
-    },
-    {
-      id: 'mock2',
-      user_id: user?.id || 'uid2',
-      title: 'بث قادم: سيارات كلاسيكية',
-      description: 'فيديو حصري لاستعراض السيارة قبل بدء المزاد عليها. ننتظركم الليلة!',
-      media_type: 'video',
-      media_urls: [
-        'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-      ],
-      created_at: new Date().toISOString(),
-      profiles: { full_name: 'Auto Auctions' }
-    }
-  ];
+  useEffect(() => { 
+    fetchPosts(); 
+    fetchLiveSessions();
 
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
+    const channelId = `home-live-global-${Date.now()}`;
+    const channel = supabase.channel(channelId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_streams' }, () => {
+        fetchLiveSessions();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const onRefresh = () => { 
+    setRefreshing(true); 
+    fetchPosts(); 
+    fetchLiveSessions();
+  };
+
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    if (viewableItems?.length > 0) setActivePostId(viewableItems[0].item.id);
+  }).current;
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 70 }).current;
+
+  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* ─── Header Bar ─── */}
+      <View style={styles.headerBar}>
+        <NotificationBell />
+        <Image 
+          source={require('../../assets/nouble-svg.svg')} 
+          style={styles.logoIcon} 
+          contentFit="contain"
+        />
+        <View style={{ width: 34 }} />
+      </View>
+
       <FlatList
-        data={displayPosts}
+        data={posts}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <PostCard post={item} />}
+        renderItem={({ item }) => (
+          <PostCard 
+            post={item} 
+            isActive={activePostId === item.id} 
+            isLive={liveUsers.includes(item.user_id)}
+          />
+        )}
         showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
-        }
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={3}
+        initialNumToRender={2}
+        windowSize={5}
       />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F0F0F0', // Slight gray to clearly separate multiple PostCards
+  container: { flex: 1, backgroundColor: '#000' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  headerBar: {
+    flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 18, paddingVertical: 10,
+    borderBottomWidth: 0.5, borderBottomColor: '#111',
   },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  }
+  logoIcon: {
+    width: 60,
+    height: 30,
+  },
 });

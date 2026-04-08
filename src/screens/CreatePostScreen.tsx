@@ -1,300 +1,298 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+    View, Text, StyleSheet, TouchableOpacity, TextInput,
+    ScrollView, Alert, ActivityIndicator, Switch, Dimensions,
+    KeyboardAvoidingView, Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
-import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../providers/AuthProvider';
 import { colors } from '../theme/colors';
+import { useNavigation } from '@react-navigation/native';
 
-export const CreatePostScreen = ({ navigation }: any) => {
-  const { user } = useAuth();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [mediaAssets, setMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
-  const [mediaType, setMediaType] = useState<'video' | 'images' | null>(null);
-  const [uploading, setUploading] = useState(false);
+// Elite Dynamic Import — Silent fallback for Expo Go
+let Compressor: any = null;
+try {
+    Compressor = require('react-native-compressor').Video;
+} catch (_) { /* Compressor unavailable in Expo Go — handled below */ }
 
-  const pickMedia = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
-      allowsMultipleSelection: true,
-      selectionLimit: 50,
-      quality: 1, // Max quality to prevent compression issues
+const { width } = Dimensions.get('window');
+
+// ── Constants ──────────────────────────────────────────────
+const MAX_UPLOAD_BYTES = 49 * 1024 * 1024; // 49 MB hard ceiling (Supabase Free Plan)
+
+// ── Helpers ────────────────────────────────────────────────
+const getFileSize = async (uri: string): Promise<number> => {
+    const info: any = await FileSystem.getInfoAsync(uri);
+    return info?.size ?? 0;
+};
+
+const fmtMB = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+// ──────────────────────────────────────────────────────────
+export const CreatePostScreen = () => {
+    const navigation = useNavigation<any>();
+    const { user } = useAuth();
+
+    const [title, setTitle]           = useState('');
+    const [description, setDescription] = useState('');
+    const [media, setMedia]           = useState<any>(null);
+    const [isHighQuality, setIsHighQuality] = useState(false);
+    const [uploading, setUploading]   = useState(false);
+    const [statusMsg, setStatusMsg]   = useState('');
+
+    // Modern expo-video player
+    const player = useVideoPlayer(media?.uri ?? '', (p) => {
+        p.loop = true;
+        p.play();
     });
 
-    if (!result.canceled && result.assets.length > 0) {
-      const type = result.assets[0].type === 'video' ? 'video' : 'images';
-      setMediaType(type);
-      
-      if (type === 'video' && result.assets.length > 1) {
-        Alert.alert('تنبيه', 'يمكنك رفع فيديو واحد فقط للمزاد في كل مرة.');
-        setMediaAssets([result.assets[0]]);
-      } else {
-        setMediaAssets(result.assets);
-      }
-    }
-  };
+    // ── Pick media from library ──────────────────────────
+    const pickMedia = async () => {
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images', 'videos'],
+            allowsEditing: true,
+            quality: 1,
+        });
 
-  const handleCreatePost = async () => {
-    if (!title.trim()) return Alert.alert('خطأ', 'يرجى كتابة عنوان المزاد');
-    if (mediaAssets.length === 0) return Alert.alert('خطأ', 'يرجى اختيار صورة أو فيديو واحد على الأقل');
+        if (result.canceled || !result.assets[0]?.uri) return;
+        const asset = result.assets[0];
 
-    setUploading(true);
-    try {
-      const urls: string[] = [];
+        // Basic size check at selection time (soft UX hint only)
+        try {
+            const size = await getFileSize(asset.uri);
+            if (size > MAX_UPLOAD_BYTES && asset.type === 'video') {
+                Alert.alert(
+                    'تنبيه',
+                    `حجم الفيديو ${fmtMB(size)}. إذا كان الضغط مفعلاً سنحاول تصغيره، وإلا لن يمكن رفعه.`
+                );
+            }
+        } catch (_) { /* Non-blocking */ }
 
-      // Upload files securely using Blob (Safest approach for large Video files without Memory crash)
-      for (let i = 0; i < mediaAssets.length; i++) {
-        const asset = mediaAssets[i];
-        const ext = asset.type === 'video' ? 'mp4' : 'jpg';
-        const fileName = `${user?.id}/${Date.now()}_${i}.${ext}`;
-        const filePath = `posts/${fileName}`;
+        setMedia(asset);
+    };
 
-        // Read file securely as Base64 to bypass React Native 0-byte blob bug
-        const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
-
-        const { error: uploadError } = await supabase.storage
-          .from('post-media')
-          .upload(filePath, decode(base64), { 
-            contentType: asset.type === 'video' ? 'video/mp4' : 'image/jpeg' 
-          });
-
-        if (uploadError) throw uploadError;
-
-        const { data: urlData } = supabase.storage
-          .from('post-media')
-          .getPublicUrl(filePath);
-
-        urls.push(urlData.publicUrl);
-      }
-
-      // Save Data to Database
-      const { error: dbError } = await supabase.from('posts').insert([
-        {
-          user_id: user?.id,
-          title,
-          description,
-          media_type: mediaType,
-          media_urls: urls,
+    // ── Upload flow ──────────────────────────────────────
+    const handleUpload = async () => {
+        if (!title || !media) {
+            return Alert.alert('تنبيه', 'يرجى إضافة عنوان ومحتوى للمنشور.');
         }
-      ]);
+        if (!user) return;
 
-      if (dbError) throw dbError;
+        setUploading(true);
+        setStatusMsg('جاري التحقق من الملف...');
 
-      Alert.alert('نجاح', 'تم بدء المزاد ونشره بنجاح!');
-      setTitle('');
-      setDescription('');
-      setMediaAssets([]);
-      setMediaType(null);
-      navigation.navigate('Home'); // Redirect to Home Feed
+        try {
+            let finalUri = media.uri;
 
-    } catch (error: any) {
-      Alert.alert('خطأ أثناء الرفع', error.message);
-    } finally {
-      setUploading(false);
-    }
-  };
+            if (media.type === 'video') {
+                // ── STEP 1: Get initial file size ─────────────
+                const initialSize = await getFileSize(media.uri);
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.headerTitle}>مزاد أو منشور جديد 🚀</Text>
+                // ── STEP 2: HQ + big file → BLOCK ─────────────
+                if (initialSize > MAX_UPLOAD_BYTES && isHighQuality) {
+                    setUploading(false);
+                    setStatusMsg('');
+                    return Alert.alert(
+                        'تنبيه',
+                        "هذا الفيديو كبير جداً. يرجى إيقاف زر 'رفع بجودة عالية' ليتم ضغطه، أو اختيار فيديو أقصر."
+                    );
+                }
 
-          {/* Media Picker Area */}
-          <TouchableOpacity 
-            style={styles.mediaPicker} 
-            onPress={pickMedia}
-            activeOpacity={0.8}
-          >
-            {mediaAssets.length > 0 ? (
-              <View style={styles.selectedMediaContainer}>
-                <Image source={{ uri: mediaAssets[0].uri }} style={styles.mediaPreview} />
-                {mediaAssets.length > 1 && (
-                  <View style={styles.mediaBadge}>
-                    <Text style={styles.mediaBadgeText}>+{mediaAssets.length - 1}</Text>
-                  </View>
-                )}
-                {mediaType === 'video' && (
-                  <View style={styles.videoBadge}>
-                    <Ionicons name="videocam" size={20} color="#FFF" />
-                  </View>
-                )}
-                <TouchableOpacity 
-                  style={styles.deleteMediaBtn}
-                  onPress={() => setMediaAssets([])}
-                >
-                  <Ionicons name="close-circle" size={28} color="red" />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.mediaPlaceholder}>
-                <Ionicons name="images-outline" size={40} color={colors.textSecondary} />
-                <Text style={styles.mediaPlaceholderText}>انقر لاختيار فيديو المزاد أو مجموعة صور</Text>
-              </View>
-            )}
-          </TouchableOpacity>
+                // ── STEP 3: Compression if needed ─────────────
+                if (initialSize > MAX_UPLOAD_BYTES && !isHighQuality) {
+                    if (!Compressor) {
+                        setUploading(false);
+                        setStatusMsg('');
+                        return Alert.alert(
+                            'تنبيه',
+                            'الضغط غير متاح في وضع الاختبار. يرجى تثبيت التطبيق الفعلي أو اختيار فيديو أصغر.'
+                        );
+                    }
 
-          {/* Form Fields */}
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.titleInput}
-              placeholder="عن ماذا هذا المزاد؟ (العنوان)"
-              placeholderTextColor={colors.textSecondary}
-              value={title}
-              onChangeText={setTitle}
-            />
-            
-            <TextInput
-              style={styles.descriptionInput}
-              placeholder="اكتب تفاصيل السيارة، الجودة، السعر الابتدائي..."
-              placeholderTextColor={colors.textSecondary}
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              textAlignVertical="top"
-            />
-          </View>
+                    setStatusMsg('جاري ضغط الفيديو (1080p)...');
+                    try {
+                        finalUri = await Compressor.compress(media.uri, {
+                            compressionMethod: 'auto',
+                            maximumResolution: 1080,
+                        });
+                    } catch (compressErr) {
+                        setUploading(false);
+                        setStatusMsg('');
+                        return Alert.alert('خطأ', 'فشل ضغط الفيديو. يرجى اختيار فيديو أقصر.');
+                    }
 
-          {/* Submit Button */}
-          <TouchableOpacity 
-            style={[styles.submitButton, uploading && styles.submitButtonDisabled]} 
-            onPress={handleCreatePost}
-            disabled={uploading}
-          >
-            {uploading ? (
-              <ActivityIndicator color={colors.background} />
-            ) : (
-              <Text style={styles.submitButtonText}>إنشاء المزاد</Text>
-            )}
-          </TouchableOpacity>
+                    // ── STEP 4: Post-compression size check ───
+                    const compressedSize = await getFileSize(finalUri);
+                    if (compressedSize > MAX_UPLOAD_BYTES) {
+                        setUploading(false);
+                        setStatusMsg('');
+                        return Alert.alert(
+                            'لا يزال كبيراً',
+                            `حجم الفيديو بعد الضغط (${fmtMB(compressedSize)}) يتجاوز 49 ميجا. يرجى اختيار فيديو أقصر.`
+                        );
+                    }
+                }
+            }
 
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
+            // ── Upload to Supabase Storage ─────────────────
+            setStatusMsg('جاري الرفع...');
+            const base64 = await FileSystem.readAsStringAsync(finalUri, { encoding: 'base64' });
+            const ext      = media.type === 'video' ? 'mp4' : 'jpg';
+            const filePath = `posts/${user.id}/${Date.now()}.${ext}`;
+
+            const { error: uploadErr } = await supabase.storage
+                .from('post-media')
+                .upload(filePath, decode(base64), {
+                    contentType: media.type === 'video' ? 'video/mp4' : 'image/jpeg',
+                    upsert: true,
+                });
+
+            if (uploadErr) throw uploadErr;
+
+            const { data: { publicUrl } } = supabase.storage.from('post-media').getPublicUrl(filePath);
+
+            // ── Insert post record ─────────────────────────
+            const { error: dbError } = await supabase.from('posts').insert({
+                user_id:      user.id,
+                title,
+                description,
+                media_urls:   [publicUrl],
+                media_type:   media.type === 'video' ? 'video' : 'images',
+            });
+
+            if (dbError) throw dbError;
+
+            Alert.alert('تم بنجاح 🎉', 'لقد تم نشر منشورك!');
+            navigation.replace('MainTabs');
+
+        } catch (error: any) {
+            Alert.alert('خطأ في الرفع', error.message ?? 'حدث خطأ غير متوقع.');
+        } finally {
+            setUploading(false);
+            setStatusMsg('');
+        }
+    };
+
+    // ── Render ─────────────────────────────────────────────
+    return (
+        <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex1}>
+
+                {/* Nav */}
+                <View style={styles.nav}>
+                    <TouchableOpacity onPress={() => navigation.goBack()}>
+                        <Ionicons name="close-outline" size={30} color="#FFF" />
+                    </TouchableOpacity>
+                    <Text style={styles.navTitle}>إنشاء منشور جديد</Text>
+                    <TouchableOpacity onPress={handleUpload} disabled={uploading}>
+                        {uploading
+                            ? <ActivityIndicator color={colors.primary} />
+                            : <Text style={styles.navAction}>نشر</Text>}
+                    </TouchableOpacity>
+                </View>
+
+                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+
+                    {/* Media Frame */}
+                    <View style={styles.mediaFrame}>
+                        {media ? (
+                            <View style={styles.flex1}>
+                                {media.type === 'video' ? (
+                                    <VideoView player={player} style={styles.media} nativeControls={false} />
+                                ) : (
+                                    <Image source={{ uri: media.uri }} style={styles.media} contentFit="contain" />
+                                )}
+                                <TouchableOpacity style={styles.clearBtn} onPress={() => setMedia(null)}>
+                                    <Ionicons name="close-circle" size={30} color={colors.primary} />
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <TouchableOpacity style={styles.picker} onPress={pickMedia}>
+                                <Ionicons name="cloud-upload-outline" size={60} color="#222" />
+                                <Text style={styles.pickerLab}>اضغط لرفع فيديو أو صورة</Text>
+                                <Text style={styles.pickerSub}>الحد الأقصى للرفع 49 MB</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {/* Quality Toggle — shown only for videos */}
+                    {media?.type === 'video' && (
+                        <View style={styles.qualityCard}>
+                            <View style={styles.flex1}>
+                                <Text style={styles.qualityTitle}>رفع بجودة عالية</Text>
+                                <Text style={styles.qualitySub}>
+                                    {isHighQuality
+                                        ? 'سيتم رفع النسخة الأصلية — يجب أن يكون حجمها أقل من 49 MB.'
+                                        : 'سيتم ضغط الفيديو إلى 1080p لضمان نجاح الرفع.'}
+                                </Text>
+                            </View>
+                            <Switch
+                                value={isHighQuality}
+                                onValueChange={setIsHighQuality}
+                                trackColor={{ false: '#333', true: colors.primary }}
+                                thumbColor="#FFF"
+                            />
+                        </View>
+                    )}
+
+                    {/* Form */}
+                    <View style={styles.form}>
+                        <TextInput
+                            style={styles.inputT}
+                            placeholder="عنوان المنشور..."
+                            value={title}
+                            onChangeText={setTitle}
+                            placeholderTextColor="#444"
+                        />
+                        <TextInput
+                            style={styles.inputD}
+                            placeholder="اكتب وصفاً..."
+                            value={description}
+                            onChangeText={setDescription}
+                            multiline
+                            placeholderTextColor="#444"
+                        />
+                    </View>
+
+                    {/* Loader */}
+                    {uploading && (
+                        <View style={styles.loader}>
+                            <ActivityIndicator color={colors.primary} size="large" />
+                            <Text style={styles.loaderTxt}>{statusMsg}</Text>
+                        </View>
+                    )}
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </SafeAreaView>
+    );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 50,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: colors.text,
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  mediaPicker: {
-    width: '100%',
-    height: 250,
-    backgroundColor: colors.inputBackground,
-    borderRadius: 15,
-    borderWidth: 2,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    marginBottom: 25,
-    overflow: 'hidden',
-  },
-  mediaPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  mediaPlaceholderText: {
-    marginTop: 10,
-    color: colors.textSecondary,
-    fontSize: 16,
-    textAlign: 'center',
-  },
-  selectedMediaContainer: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
-  mediaPreview: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  mediaBadge: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  mediaBadgeText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-  },
-  videoBadge: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 8,
-    borderRadius: 20,
-  },
-  deleteMediaBtn: {
-    position: 'absolute',
-    top: 5,
-    right: 5,
-  },
-  inputContainer: {
-    marginBottom: 25,
-  },
-  titleInput: {
-    backgroundColor: colors.inputBackground,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 15,
-    fontSize: 16,
-    color: colors.text,
-    marginBottom: 15,
-  },
-  descriptionInput: {
-    backgroundColor: colors.inputBackground,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 15,
-    fontSize: 16,
-    color: colors.text,
-    height: 120,
-  },
-  submitButton: {
-    backgroundColor: colors.primary,
-    padding: 18,
-    borderRadius: 15,
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-  },
-  submitButtonDisabled: {
-    opacity: 0.7,
-  },
-  submitButtonText: {
-    color: colors.text, // yellow background -> black text matches snapchat style
-    fontSize: 18,
-    fontWeight: 'bold',
-  }
+    safe:         { flex: 1, backgroundColor: '#000' },
+    flex1:        { flex: 1 },
+    nav:          { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 0.5, borderBottomColor: '#111' },
+    navTitle:     { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
+    navAction:    { color: colors.primary, fontSize: 18, fontWeight: 'bold' },
+    scroll:       { padding: 20 },
+    mediaFrame:   { width: '100%', height: width * 0.9, backgroundColor: '#050505', borderRadius: 24, overflow: 'hidden', borderStyle: 'dashed', borderWidth: 1, borderColor: '#1A1A1A', marginBottom: 25 },
+    picker:       { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    pickerLab:    { color: '#333', marginTop: 15, fontSize: 16 },
+    pickerSub:    { color: '#222', marginTop: 6, fontSize: 12 },
+    media:        { width: '100%', height: '100%' },
+    clearBtn:     { position: 'absolute', top: 15, right: 15 },
+    qualityCard:  { flexDirection: 'row-reverse', backgroundColor: '#0D0D0D', borderRadius: 16, padding: 18, alignItems: 'center', marginBottom: 25, gap: 15 },
+    qualityTitle: { color: '#FFF', fontSize: 15, fontWeight: 'bold', textAlign: 'right' },
+    qualitySub:   { color: '#555', fontSize: 11, marginTop: 4, textAlign: 'right' },
+    form:         { marginBottom: 30 },
+    inputT:       { backgroundColor: '#0D0D0D', borderRadius: 12, padding: 18, color: '#FFF', marginBottom: 12, fontSize: 16, textAlign: 'right' },
+    inputD:       { backgroundColor: '#0D0D0D', borderRadius: 12, padding: 18, color: '#FFF', height: 110, fontSize: 16, textAlign: 'right' },
+    loader:       { alignItems: 'center', paddingVertical: 20 },
+    loaderTxt:    { color: colors.primary, marginTop: 12, fontWeight: 'bold' },
 });
