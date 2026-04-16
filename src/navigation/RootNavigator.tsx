@@ -6,8 +6,6 @@ import { AuthNavigator } from './AuthNavigator';
 import { MainNavigator } from './MainNavigator';
 import { CreateMenuScreen } from '../screens/CreateMenuScreen';
 import { CreatePostScreen } from '../screens/CreatePostScreen';
-import { CreateHubScreen } from '../screens/CreateHubScreen';
-import { LiveViewerScreen } from '../screens/LiveViewerScreen';
 import { colors } from '../theme/colors';
 
 const Stack = createNativeStackNavigator();
@@ -41,12 +39,6 @@ export const RootNavigator = () => {
         }} 
       />
       <Stack.Screen name="CreatePost" component={CreatePostScreen} />
-      <Stack.Screen name="CreateHub" component={CreateHubScreen} />
-      <Stack.Screen 
-        name="LiveViewer" 
-        component={LiveViewerScreen} 
-        options={{ presentation: 'fullScreenModal' }} 
-      />
     </Stack.Navigator>
   );
 };

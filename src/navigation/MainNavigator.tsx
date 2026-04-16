@@ -9,6 +9,7 @@ import {
   Dimensions,
   Alert,
 } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BlurView } from 'expo-blur';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -18,105 +19,31 @@ import { useNavigation } from '@react-navigation/native';
 import { HomeScreen } from '../screens/HomeScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { SearchScreen } from '../screens/SearchScreen';
-import { UserProfileScreen } from '../screens/UserProfileScreen';
+import { PublicProfileScreen } from '../screens/PublicProfileScreen';
 import { UserFeedScreen } from '../screens/UserFeedScreen';
-import { HostLiveScreen } from '../screens/HostLiveScreen';
-import { ViewerLiveScreen } from '../screens/ViewerLiveScreen';
+import { RecordingScreen } from '../screens/RecordingScreen';
+import { DashboardScreen } from '../screens/DashboardScreen';
+import { ChatListScreen } from '../screens/ChatListScreen';
+import { ChatRoomScreen } from '../screens/ChatRoomScreen';
+import { StoryEditorScreen } from '../screens/StoryEditorScreen';
+import { StoryViewerScreen } from '../screens/StoryViewerScreen';
+import { StoryCameraScreen } from '../screens/StoryCameraScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
+import { NotificationsScreen } from '../screens/NotificationsScreen';
+import { MusicScreen } from '../screens/MusicScreen';
+
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { colors } from '../theme/colors';
+import { CreateMenuModal } from '../components/CreateMenuModal';
 
 const Tab   = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 const { width } = Dimensions.get('window');
 
 // ======================================================
-// Create Menu Modal — يظهر فوق كل شيء بدون Navigation
-// ======================================================
-const CreateMenuModal = ({
-  visible,
-  onClose,
-}: {
-  visible: boolean;
-  onClose: () => void;
-}) => {
-  const navigation = useNavigation<any>();
-
-  const goTo = (screen: string) => {
-    onClose();
-    setTimeout(() => navigation.navigate(screen), 50);
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
-
-      <SafeAreaView style={styles.modalContainer}>
-        {/* زر الإغلاق */}
-        <View style={styles.modalHeader}>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-            <Ionicons name="close" size={30} color="#FFF" />
-          </TouchableOpacity>
-        </View>
-
-        {/* العنوان */}
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>ماذا تريد أن تنشئ؟</Text>
-
-          <View style={styles.optionsRow}>
-            {/* بث مباشر */}
-            <TouchableOpacity
-              style={styles.optionCard}
-              onPress={() => goTo('CreateHub')}
-            >
-              <View style={[styles.optionIcon, { backgroundColor: '#FF3B30' }]}>
-                <Ionicons name="radio" size={38} color="#FFF" />
-              </View>
-              <Text style={styles.optionLabel}>بث مباشر</Text>
-              <Text style={styles.optionSub}>ابدأ مزاد حي الآن</Text>
-            </TouchableOpacity>
-
-            {/* منشور جديد */}
-            <TouchableOpacity
-              style={styles.optionCard}
-              onPress={() => goTo('CreatePost')}
-            >
-              <View style={[styles.optionIcon, { backgroundColor: '#FF9500' }]}>
-                <Ionicons name="images" size={38} color="#FFF" />
-              </View>
-              <Text style={styles.optionLabel}>منشور جديد</Text>
-              <Text style={styles.optionSub}>شارك صور أو فيديو</Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            style={styles.storyCard}
-            onPress={() =>
-              Alert.alert('قريباً', 'ميزة القصص ستكون متاحة قريباً 🔥')
-            }
-          >
-            <Ionicons name="camera-outline" size={24} color={colors.primary} />
-            <Text style={styles.storyLabel}>قصة سريعة (Story)</Text>
-            <Text style={styles.comingSoon}>قريباً</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.footerBrand}>A7 Flow Live Auction</Text>
-      </SafeAreaView>
-    </Modal>
-  );
-};
-
-// ======================================================
 // Tab Navigator (Floating Pill)
 // ======================================================
 const TabNavigator = () => {
-  const [showCreateMenu, setShowCreateMenu] = useState(false);
-
   return (
     <>
       <Tab.Navigator
@@ -159,6 +86,36 @@ const TabNavigator = () => {
         />
 
         <Tab.Screen
+          name="Chats"
+          component={ChatListScreen}
+          options={{
+            tabBarLabel: 'الرسائل',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="chatbubble-ellipses-outline" size={size} color={color} />
+            ),
+          }}
+        />
+
+        <Tab.Screen
+          name="RecordingPlaceholder"
+          component={HomeScreen}
+          listeners={({ navigation }) => ({
+            tabPress: (e) => {
+              e.preventDefault();
+              navigation.navigate('Recording');
+            },
+          })}
+          options={{
+            tabBarLabel: () => null,
+            tabBarIcon: () => (
+              <View style={styles.recordBtnHighlight}>
+                <Ionicons name="fitness" size={28} color="#000" />
+              </View>
+            ),
+          }}
+        />
+
+        <Tab.Screen
           name="Search"
           component={SearchScreen}
           options={{
@@ -169,22 +126,13 @@ const TabNavigator = () => {
           }}
         />
 
-        {/* زر الإنشاء — لا يفتح شاشة، فقط يفتح المودال */}
         <Tab.Screen
-          name="CreatePlaceholder"
-          component={HomeScreen} // مكون وهمي، لن يُرى أبداً
-          listeners={{
-            tabPress: (e) => {
-              e.preventDefault(); // منع أي تنقل
-              setShowCreateMenu(true); // فتح المودال فقط
-            },
-          }}
+          name="Music"
+          component={MusicScreen}
           options={{
-            tabBarLabel: () => null,
-            tabBarIcon: () => (
-              <View style={styles.createBtn}>
-                <Ionicons name="add" size={32} color="#000" />
-              </View>
+            tabBarLabel: 'الموسيقى',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="musical-notes" size={size} color={color} />
             ),
           }}
         />
@@ -201,11 +149,6 @@ const TabNavigator = () => {
         />
       </Tab.Navigator>
 
-      {/* المودال يظهر فوق كل شيء */}
-      <CreateMenuModal
-        visible={showCreateMenu}
-        onClose={() => setShowCreateMenu(false)}
-      />
     </>
   );
 };
@@ -214,46 +157,100 @@ const TabNavigator = () => {
 // Root Navigator — wraps Tabs + Push Screens
 // ======================================================
 export const MainNavigator = () => (
-  <Stack.Navigator screenOptions={{ headerShown: false }}>
-    <Stack.Screen name="Tabs" component={TabNavigator} />
-    <Stack.Screen
-      name="UserProfile"
-      component={UserProfileScreen}
-      options={{ animation: 'slide_from_right' }}
-    />
-    <Stack.Screen
-      name="UserFeedScreen"
-      component={UserFeedScreen}
-      options={{ animation: 'slide_from_right' }}
-    />
-    <Stack.Screen
-      name="HostLive"
-      component={HostLiveScreen}
-      options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
-    />
-    <Stack.Screen
-      name="LiveViewer"
-      component={ViewerLiveScreen}
-      options={{ animation: 'slide_from_bottom' }}
-    />
-  </Stack.Navigator>
+  <GestureHandlerRootView style={{ flex: 1 }}>
+    <BottomSheetModalProvider>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Tabs" component={TabNavigator} />
+        <Stack.Screen
+          name="UserProfile"
+          component={PublicProfileScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="UserFeedScreen"
+          component={UserFeedScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="Recording"
+          component={RecordingScreen}
+          options={{ 
+            animation: 'fade_from_bottom',
+            gestureEnabled: false,
+            presentation: 'fullScreenModal',
+          }}
+        />
+        <Stack.Screen
+          name="Dashboard"
+          component={DashboardScreen}
+          options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="StoryCamera"
+          component={StoryCameraScreen}
+          options={{ animation: 'fade', gestureEnabled: false, presentation: 'fullScreenModal' }}
+        />
+        <Stack.Screen
+          name="StoryEditor"
+          component={StoryEditorScreen}
+          options={{ animation: 'fade', gestureEnabled: false, presentation: 'fullScreenModal' }}
+        />
+        <Stack.Screen
+          name="StoryViewer"
+          component={StoryViewerScreen}
+          options={{ animation: 'fade', gestureEnabled: true, presentation: 'fullScreenModal' }}
+        />
+        <Stack.Screen
+          name="ChatRoom"
+          component={ChatRoomScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen 
+          name="Settings" 
+          component={SettingsScreen} 
+          options={{ headerShown: false, presentation: 'fullScreenModal' }} 
+        />
+        <Stack.Screen 
+          name="Notifications" 
+          component={NotificationsScreen} 
+          options={{ headerShown: false, presentation: 'pageSheet' }} 
+        />
+      </Stack.Navigator>
+    </BottomSheetModalProvider>
+  </GestureHandlerRootView>
 );
 
 const styles = StyleSheet.create({
   // Tab Bar
-  createBtn: {
+  recordBtnHighlight: {
     backgroundColor: colors.primary,
-    width: 48,
-    height: 40, // مستطيل رويان (Squircle Look)
-    borderRadius: 14, // حواف مربعة منحنية (Square Rounded)
+    width: 52,
+    height: 42,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.9,
-    shadowRadius: 12,
-    elevation: 12,
-    marginBottom: Platform.OS === 'ios' ? 0 : 5, 
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.9,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 12,
+      },
+      web: {
+        boxShadow: `0px 4px 12px ${colors.primary}`,
+      },
+    }),
+    marginBottom: Platform.OS === 'ios' ? 0 : 5,
+  },
+  recordTabIcon: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recordTabIconActive: {
+    // subtle glow behind active record icon
   },
 
   // Modal

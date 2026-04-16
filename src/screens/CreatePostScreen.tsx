@@ -6,185 +6,145 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { useVideoPlayer, VideoView } from 'expo-video';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
-import { decode } from 'base64-arraybuffer';
-import { supabase } from '../lib/supabase';
+import { apiClient } from '../config/api';
 import { useAuth } from '../providers/AuthProvider';
 import { colors } from '../theme/colors';
 import { useNavigation } from '@react-navigation/native';
 
-// Elite Dynamic Import — Silent fallback for Expo Go
 let Compressor: any = null;
 try {
     Compressor = require('react-native-compressor').Video;
-} catch (_) { /* Compressor unavailable in Expo Go — handled below */ }
+} catch (_) { }
 
 const { width } = Dimensions.get('window');
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200 MB limit
+const fmtMB = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-// ── Constants ──────────────────────────────────────────────
-const MAX_UPLOAD_BYTES = 49 * 1024 * 1024; // 49 MB hard ceiling (Supabase Free Plan)
-
-// ── Helpers ────────────────────────────────────────────────
 const getFileSize = async (uri: string): Promise<number> => {
     const info: any = await FileSystem.getInfoAsync(uri);
     return info?.size ?? 0;
 };
 
-const fmtMB = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-
-// ──────────────────────────────────────────────────────────
 export const CreatePostScreen = () => {
     const navigation = useNavigation<any>();
     const { user } = useAuth();
 
     const [title, setTitle]           = useState('');
     const [description, setDescription] = useState('');
-    const [media, setMedia]           = useState<any>(null);
+    const [mediaList, setMediaList]   = useState<any[]>([]);
     const [isHighQuality, setIsHighQuality] = useState(false);
     const [uploading, setUploading]   = useState(false);
     const [statusMsg, setStatusMsg]   = useState('');
 
-    // Modern expo-video player
-    const player = useVideoPlayer(media?.uri ?? '', (p) => {
-        p.loop = true;
-        p.play();
-    });
-
-    // ── Pick media from library ──────────────────────────
     const pickMedia = async () => {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images', 'videos'],
-            allowsEditing: true,
+            allowsMultipleSelection: true,
+            selectionLimit: 10,
             quality: 1,
         });
 
-        if (result.canceled || !result.assets[0]?.uri) return;
-        const asset = result.assets[0];
+        if (result.canceled || !result.assets || result.assets.length === 0) return;
 
-        // Basic size check at selection time (soft UX hint only)
-        try {
-            const size = await getFileSize(asset.uri);
-            if (size > MAX_UPLOAD_BYTES && asset.type === 'video') {
-                Alert.alert(
-                    'تنبيه',
-                    `حجم الفيديو ${fmtMB(size)}. إذا كان الضغط مفعلاً سنحاول تصغيره، وإلا لن يمكن رفعه.`
-                );
-            }
-        } catch (_) { /* Non-blocking */ }
+        let totalSize = 0;
+        for (let asset of result.assets) {
+            totalSize += await getFileSize(asset.uri);
+        }
 
-        setMedia(asset);
+        if (totalSize > 500 * 1024 * 1024) {
+             Alert.alert('تنبيه', 'حجم الملفات الإجمالي كبير جداً، يرجى تقليل بعض الفيديوهات.');
+             return;
+        }
+
+        setMediaList([...mediaList, ...result.assets].slice(0, 10)); // max 10
     };
 
-    // ── Upload flow ──────────────────────────────────────
     const handleUpload = async () => {
-        if (!title || !media) {
-            return Alert.alert('تنبيه', 'يرجى إضافة عنوان ومحتوى للمنشور.');
+        if (!title || mediaList.length === 0) {
+            return Alert.alert('تنبيه', 'يرجى إضافة عنوان واختيار ملفات لرفعها.');
         }
         if (!user) return;
 
         setUploading(true);
-        setStatusMsg('جاري التحقق من الملف...');
+        setStatusMsg('جاري التحضير...');
 
         try {
-            let finalUri = media.uri;
+            const formData = new FormData();
+            formData.append('user_id', user.id);
+            formData.append('upload_type', 'posts');
+            const finalMediaMeta: any[] = [];
 
-            if (media.type === 'video') {
-                // ── STEP 1: Get initial file size ─────────────
-                const initialSize = await getFileSize(media.uri);
+            // Process each file
+            for (let i = 0; i < mediaList.length; i++) {
+                let m = mediaList[i];
+                let finalUri = m.uri;
+                setStatusMsg(`معالجة الملف ${i + 1} من ${mediaList.length}...`);
 
-                // ── STEP 2: HQ + big file → BLOCK ─────────────
-                if (initialSize > MAX_UPLOAD_BYTES && isHighQuality) {
-                    setUploading(false);
-                    setStatusMsg('');
-                    return Alert.alert(
-                        'تنبيه',
-                        "هذا الفيديو كبير جداً. يرجى إيقاف زر 'رفع بجودة عالية' ليتم ضغطه، أو اختيار فيديو أقصر."
-                    );
-                }
-
-                // ── STEP 3: Compression if needed ─────────────
-                if (initialSize > MAX_UPLOAD_BYTES && !isHighQuality) {
-                    if (!Compressor) {
-                        setUploading(false);
-                        setStatusMsg('');
-                        return Alert.alert(
-                            'تنبيه',
-                            'الضغط غير متاح في وضع الاختبار. يرجى تثبيت التطبيق الفعلي أو اختيار فيديو أصغر.'
-                        );
-                    }
-
-                    setStatusMsg('جاري ضغط الفيديو (1080p)...');
-                    try {
-                        finalUri = await Compressor.compress(media.uri, {
-                            compressionMethod: 'auto',
-                            maximumResolution: 1080,
-                        });
-                    } catch (compressErr) {
-                        setUploading(false);
-                        setStatusMsg('');
-                        return Alert.alert('خطأ', 'فشل ضغط الفيديو. يرجى اختيار فيديو أقصر.');
-                    }
-
-                    // ── STEP 4: Post-compression size check ───
-                    const compressedSize = await getFileSize(finalUri);
-                    if (compressedSize > MAX_UPLOAD_BYTES) {
-                        setUploading(false);
-                        setStatusMsg('');
-                        return Alert.alert(
-                            'لا يزال كبيراً',
-                            `حجم الفيديو بعد الضغط (${fmtMB(compressedSize)}) يتجاوز 49 ميجا. يرجى اختيار فيديو أقصر.`
-                        );
+                if (m.type === 'video') {
+                    const initialSize = await getFileSize(m.uri);
+                    if (initialSize > MAX_UPLOAD_BYTES && !isHighQuality) {
+                        setStatusMsg(`جاري ضغط الفيديو ${i + 1}...`);
+                        if (Compressor) {
+                            try {
+                                finalUri = await Compressor.compress(m.uri, {
+                                    compressionMethod: 'auto',
+                                    maximumResolution: 1080,
+                                });
+                            } catch (e) {
+                                console.log('Compressor failed:', e);
+                            }
+                        }
                     }
                 }
+
+                formData.append('media', {
+                    uri: finalUri,
+                    name: m.fileName || `media-${Date.now()}-${i}.${m.type === 'video' ? 'mp4' : 'jpg'}`,
+                    type: m.type === 'video' ? 'video/mp4' : 'image/jpeg'
+                } as any);
+
+                finalMediaMeta.push({ type: m.type === 'video' ? 'video' : 'image' });
             }
 
-            // ── Upload to Supabase Storage ─────────────────
-            setStatusMsg('جاري الرفع...');
-            const base64 = await FileSystem.readAsStringAsync(finalUri, { encoding: 'base64' });
-            const ext      = media.type === 'video' ? 'mp4' : 'jpg';
-            const filePath = `posts/${user.id}/${Date.now()}.${ext}`;
+            setStatusMsg('جاري الرفع إلى الخادم...');
+            const uploadRes = await apiClient.post('/upload', formData);
 
-            const { error: uploadErr } = await supabase.storage
-                .from('post-media')
-                .upload(filePath, decode(base64), {
-                    contentType: media.type === 'video' ? 'video/mp4' : 'image/jpeg',
-                    upsert: true,
-                });
+            if (uploadRes.error) throw new Error(uploadRes.error);
+            
+            setStatusMsg('نشر المنشور...');
+            const uploadedUrls = uploadRes.urls;
+            const fullMediaList = finalMediaMeta.map((meta, idx) => ({
+                url: uploadedUrls[idx],
+                type: meta.type
+            }));
 
-            if (uploadErr) throw uploadErr;
-
-            const { data: { publicUrl } } = supabase.storage.from('post-media').getPublicUrl(filePath);
-
-            // ── Insert post record ─────────────────────────
-            const { error: dbError } = await supabase.from('posts').insert({
-                user_id:      user.id,
-                title,
-                description,
-                media_urls:   [publicUrl],
-                media_type:   media.type === 'video' ? 'video' : 'images',
+            // Save Post
+            const postRes = await apiClient.post('/posts', {
+                content: `${title} - ${description}`,
+                user_id: user.id,
+                media: fullMediaList
             });
 
-            if (dbError) throw dbError;
+            if (postRes.error) throw new Error(postRes.error);
 
-            Alert.alert('تم بنجاح 🎉', 'لقد تم نشر منشورك!');
+            Alert.alert('تم بنجاح 🎉', 'لقد تم نشر منشورك المتعدد الوسائط!');
             navigation.replace('MainTabs');
 
         } catch (error: any) {
-            Alert.alert('خطأ في الرفع', error.message ?? 'حدث خطأ غير متوقع.');
+            console.log('Post Creation Failed Server Data:', error.response?.data || error);
+            Alert.alert('خطأ في الرفع', error.response?.data?.error || error.message || 'حدث خطأ أثناء الرفع.');
         } finally {
             setUploading(false);
             setStatusMsg('');
         }
     };
 
-    // ── Render ─────────────────────────────────────────────
     return (
         <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex1}>
-
                 {/* Nav */}
                 <View style={styles.nav}>
                     <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -200,37 +160,42 @@ export const CreatePostScreen = () => {
 
                 <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
 
-                    {/* Media Frame */}
-                    <View style={styles.mediaFrame}>
-                        {media ? (
-                            <View style={styles.flex1}>
-                                {media.type === 'video' ? (
-                                    <VideoView player={player} style={styles.media} nativeControls={false} />
-                                ) : (
-                                    <Image source={{ uri: media.uri }} style={styles.media} contentFit="contain" />
+                    {/* Media Frame Carousel */}
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaFrameCarousel}>
+                        {mediaList.map((m, index) => (
+                            <View key={index} style={styles.mediaItem}>
+                                <Image source={{ uri: m.uri }} style={styles.media} contentFit="cover" />
+                                {m.type === 'video' && (
+                                    <View style={styles.videoBadge}>
+                                        <Ionicons name="play-circle" size={30} color="#FFF" />
+                                    </View>
                                 )}
-                                <TouchableOpacity style={styles.clearBtn} onPress={() => setMedia(null)}>
-                                    <Ionicons name="close-circle" size={30} color={colors.primary} />
+                                <TouchableOpacity 
+                                    style={styles.clearBtn} 
+                                    onPress={() => setMediaList(mediaList.filter((_, i) => i !== index))}
+                                >
+                                    <Ionicons name="close-circle" size={24} color={colors.primary} />
                                 </TouchableOpacity>
                             </View>
-                        ) : (
-                            <TouchableOpacity style={styles.picker} onPress={pickMedia}>
-                                <Ionicons name="cloud-upload-outline" size={60} color="#222" />
-                                <Text style={styles.pickerLab}>اضغط لرفع فيديو أو صورة</Text>
-                                <Text style={styles.pickerSub}>الحد الأقصى للرفع 49 MB</Text>
+                        ))}
+                        
+                        {mediaList.length < 10 && (
+                            <TouchableOpacity style={styles.pickerBox} onPress={pickMedia}>
+                                <Ionicons name="add-circle-outline" size={40} color="#666" />
+                                <Text style={styles.pickerLab}>أضف ({mediaList.length}/10)</Text>
                             </TouchableOpacity>
                         )}
-                    </View>
+                    </ScrollView>
 
-                    {/* Quality Toggle — shown only for videos */}
-                    {media?.type === 'video' && (
+                    {/* Quality Toggle */}
+                    {mediaList.some(m => m.type === 'video') && (
                         <View style={styles.qualityCard}>
                             <View style={styles.flex1}>
-                                <Text style={styles.qualityTitle}>رفع بجودة عالية</Text>
+                                <Text style={styles.qualityTitle}>رفع الفيديوهات الأصلية (أسرع)</Text>
                                 <Text style={styles.qualitySub}>
                                     {isHighQuality
-                                        ? 'سيتم رفع النسخة الأصلية — يجب أن يكون حجمها أقل من 49 MB.'
-                                        : 'سيتم ضغط الفيديو إلى 1080p لضمان نجاح الرفع.'}
+                                        ? 'سيتم تجاوز الضغط. تأكد أن استهلاك البيانات مناسب.'
+                                        : 'سيتم ضغط الفيديوهات قبل الرفع لضمان سلاسة التشغيل.'}
                                 </Text>
                             </View>
                             <Switch
@@ -281,12 +246,13 @@ const styles = StyleSheet.create({
     navTitle:     { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
     navAction:    { color: colors.primary, fontSize: 18, fontWeight: 'bold' },
     scroll:       { padding: 20 },
-    mediaFrame:   { width: '100%', height: width * 0.9, backgroundColor: '#050505', borderRadius: 24, overflow: 'hidden', borderStyle: 'dashed', borderWidth: 1, borderColor: '#1A1A1A', marginBottom: 25 },
-    picker:       { flex: 1, justifyContent: 'center', alignItems: 'center' },
-    pickerLab:    { color: '#333', marginTop: 15, fontSize: 16 },
-    pickerSub:    { color: '#222', marginTop: 6, fontSize: 12 },
+    mediaFrameCarousel: { flexDirection: 'row-reverse', marginBottom: 25 },
+    mediaItem:    { width: width * 0.4, height: width * 0.6, backgroundColor: '#050505', borderRadius: 16, overflow: 'hidden', marginRight: 15, position: 'relative' },
     media:        { width: '100%', height: '100%' },
-    clearBtn:     { position: 'absolute', top: 15, right: 15 },
+    videoBadge:   { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
+    clearBtn:     { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 15, padding: 2 },
+    pickerBox:    { width: width * 0.3, height: width * 0.6, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0D0D0D', borderRadius: 16, borderStyle: 'dashed', borderWidth: 1, borderColor: '#333' },
+    pickerLab:    { color: '#666', marginTop: 10, fontSize: 13, fontWeight: 'bold' },
     qualityCard:  { flexDirection: 'row-reverse', backgroundColor: '#0D0D0D', borderRadius: 16, padding: 18, alignItems: 'center', marginBottom: 25, gap: 15 },
     qualityTitle: { color: '#FFF', fontSize: 15, fontWeight: 'bold', textAlign: 'right' },
     qualitySub:   { color: '#555', fontSize: 11, marginTop: 4, textAlign: 'right' },

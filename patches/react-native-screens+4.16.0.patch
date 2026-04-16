@@ -1,0 +1,12 @@
+diff --git a/node_modules/react-native-screens/android/CMakeLists.txt b/node_modules/react-native-screens/android/CMakeLists.txt
+index e86e9cd..0ca3f00 100644
+--- a/node_modules/react-native-screens/android/CMakeLists.txt
++++ b/node_modules/react-native-screens/android/CMakeLists.txt
+@@ -47,6 +47,7 @@ if(${RNS_NEW_ARCH_ENABLED})
+             ReactAndroid::jsi
+             fbjni::fbjni
+             android
++            c++_shared
+         )
+     else()
+         target_link_libraries(

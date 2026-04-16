@@ -12,7 +12,11 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.a77jmilo.myapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,10 +28,35 @@
       "package": "com.a77jmilo.myapp"
     },
     "web": {
+      "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-video"
+      "expo-video",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Nouble to use your location for activity tracking.",
+          "locationAlwaysPermission": "Allow Nouble to track your activity in the background.",
+          "locationWhenInUsePermission": "Allow Nouble to use your location for activity tracking.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Nouble to access your photos to share them in chat.",
+          "cameraPermission": "Allow Nouble to access your camera to take photos for chat."
+        }
+      ],
+      [
+        "expo-document-picker",
+        {
+          "appleTeamId": "YOUR_TEAM_ID"
+        }
+      ],
+      "expo-media-library"
     ],
     "extra": {
       "eas": {

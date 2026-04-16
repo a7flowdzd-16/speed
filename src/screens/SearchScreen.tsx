@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../providers/AuthProvider';
 import { saveNotification } from '../lib/notifications';
 import { colors } from '../theme/colors';
+import { apiClient } from '../config/api';
 
 const { width } = Dimensions.get('window');
 const DEBOUNCE_MS = 350;
@@ -65,19 +66,13 @@ export const SearchScreen = () => {
 
   const runSearch = async (text: string) => {
     try {
-      // Search by full_name only (username column may not exist)
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, full_name, avatar_url')
-        .ilike('full_name', `%${text}%`)
-        .neq('id', user?.id)
-        .limit(30);
-
-      if (data) {
-        setResults(data);
+      const results = await apiClient.get(`/search?q=${encodeURIComponent(text)}`);
+      
+      if (results && !results.error) {
+        setResults(results);
         setSearched(true);
         // Load follow states in parallel
-        Promise.all(data.map(p => checkFollowState(p.id)));
+        Promise.all(results.map((p: any) => checkFollowState(p.id)));
       }
     } catch (err) {
       console.error('Search error:', err);
@@ -87,29 +82,41 @@ export const SearchScreen = () => {
   };
 
   const checkFollowState = async (targetId: string) => {
-    const [{ data: iFollow }, { data: theyFollow }] = await Promise.all([
-      supabase.from('follows').select('id').eq('follower_id', user?.id).eq('following_id', targetId).maybeSingle(),
-      supabase.from('follows').select('id').eq('follower_id', targetId).eq('following_id', user?.id).maybeSingle(),
-    ]);
-    let state: 'follow' | 'following' | 'follow_back' = 'follow';
-    if (iFollow) state = 'following';
-    else if (theyFollow) state = 'follow_back';
-    setFollowStates(prev => ({ ...prev, [targetId]: state }));
+    try {
+      const followersData = await apiClient.get(`/users/${targetId}/followers?requester_id=${user?.id}`);
+      const iFollow = Array.isArray(followersData) && followersData.some((f: any) => f.id === user?.id);
+      
+      const followingData = await apiClient.get(`/users/${targetId}/following?requester_id=${user?.id}`);
+      const theyFollow = Array.isArray(followingData) && followingData.some((f: any) => f.id === user?.id);
+      
+      let state: 'follow' | 'following' | 'follow_back' = 'follow';
+      if (iFollow) state = 'following';
+      else if (theyFollow) state = 'follow_back';
+      setFollowStates(prev => ({ ...prev, [targetId]: state }));
+    } catch (e) {
+      console.error('Check follow state error:', e);
+    }
   };
 
   const toggleFollow = async (targetId: string) => {
-    const current = followStates[targetId] || 'follow';
-    if (current === 'following') {
-      setFollowStates(prev => ({ ...prev, [targetId]: 'follow' }));
-      await supabase.from('follows').delete().eq('follower_id', user?.id).eq('following_id', targetId);
-    } else {
-      setFollowStates(prev => ({ ...prev, [targetId]: 'following' }));
-      await Promise.all([
-        supabase.from('follows').insert({ follower_id: user?.id, following_id: targetId }),
-        saveNotification(user!.id, targetId, 'follow'),
-      ]);
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setFollowStates(prev => {
+        const current = prev[targetId] || 'follow';
+        return { ...prev, [targetId]: current === 'following' ? 'follow' : 'following' };
+      });
+      
+      await apiClient.post('/follows/toggle', {
+        follower_id: user?.id,
+        following_id: targetId
+      });
+    } catch (error) {
+      console.error('Follow toggle error:', error);
+      // Rollback UI
+      checkFollowState(targetId);
     }
   };
+
 
   const getBtnStyle = (state: string) => {
     if (state === 'following') return styles.btnFollowing;

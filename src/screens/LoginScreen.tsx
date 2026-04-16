@@ -4,44 +4,28 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CustomInput } from '../components/CustomInput';
 import { CustomButton } from '../components/CustomButton';
 import { colors } from '../theme/colors';
-import { supabase } from '../lib/supabase';
+import { useAuth } from '../providers/AuthProvider';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export const LoginScreen = ({ navigation }: any) => {
-  const [email, setEmail] = useState('');
+  const { login } = useAuth();
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const onLogin = async () => {
-    if (!email || !password) {
+    if (!identifier || !password) {
       Alert.alert('تنبيه', 'يرجى إدخال اسم Nouble أو البريد الإلكتروني');
       return;
     }
     
     setLoading(true);
-    let targetEmail = email;
 
-    if (!email.includes('@')) {
-      const cleanedUsername = email.trim().replace('@', '').toLowerCase();
-      const { data, error: userError } = await supabase
-        .from('profiles')
-        .select('email')
-        .eq('username', cleanedUsername)
-        .maybeSingle();
-
-      if (data?.email) {
-        targetEmail = data.email;
-      } else if (!data) {
-        Alert.alert('خطأ', 'اسم Nouble هذا غير موجود. يرجى التأكد من كتابته بشكل صحيح.');
-        setLoading(false);
-        return;
-      }
-    }
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email: targetEmail.trim(),
-      password,
+    // Call unified login method from custom backend
+    const { error } = await login({ 
+      identifier: identifier.trim().toLowerCase(), 
+      password 
     });
 
     setLoading(false);
@@ -86,8 +70,8 @@ export const LoginScreen = ({ navigation }: any) => {
               label="Email or Nouble Name"
               placeholder="Username or @email"
               placeholderTextColor="rgba(255,255,255,0.3)"
-              value={email}
-              onChangeText={setEmail}
+              value={identifier}
+              onChangeText={setIdentifier}
               keyboardType="email-address"
               autoCapitalize="none"
             />
@@ -162,10 +146,20 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     marginBottom: 20,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.primary,
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.5,
+        shadowRadius: 20,
+      },
+      android: {
+        elevation: 10,
+      },
+      web: {
+        boxShadow: `0px 10px 20px ${colors.primary}80`, // 80 is roughly 0.5 opacity
+      },
+    }),
   },
   title: {
     fontSize: 28,

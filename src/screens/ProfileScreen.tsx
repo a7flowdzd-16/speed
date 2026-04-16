@@ -10,27 +10,36 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../providers/AuthProvider';
 import { colors } from '../theme/colors';
+import { apiClient, getFileUrl } from '../config/api';
+import { useNavigation } from '@react-navigation/native';
 import { PostCard } from '../components/PostCard';
+import { ActivityPostCard } from '../components/ActivityPostCard';
 import { GridVideoThumbnail } from '../components/GridVideoThumbnail';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { FollowListModal } from '../components/FollowListModal';
 import { DynamicBottomSheet, DynamicBottomSheetRef } from '../components/DynamicBottomSheet';
+import { ProfileQRCodeModal } from '../components/ProfileQRCodeModal';
 
 const { width, height } = Dimensions.get('window');
 
 const COLUMN_WIDTH = width / 3;
 
 export const ProfileScreen = () => {
-  const { user } = useAuth();
+  const { user, logout, updateUser } = useAuth();
+  const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   
   const [profile, setProfile] = useState<any>(null);
   const [posts, setPosts] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'posts' | 'activities'>('posts');
   const [loading, setLoading] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [selectedPost, setSelectedPost] = useState<any>(null);
+  const [showQRView, setShowQRView] = useState(false);
 
   // Edit States
   const [editFullName, setEditFullName] = useState('');
@@ -54,12 +63,53 @@ export const ProfileScreen = () => {
 
   useEffect(() => {
     if (user) {
-      loadProfile();
-      loadUserPosts();
-      fetchStats();
-      setupRealtime();
+      setProfile(user);
+      setEditFullName(user.full_name || '');
+      setEditUsername(user.username || '');
+      setEditBio(user.bio || '');
+      setLink1Title(user.link_1_title || '');
+      setLink1Url(user.link_1_url || '');
+      setLink2Title(user.link_2_title || '');
+      setLink2Url(user.link_2_url || '');
+      
+      // Temporary bypass for Supabase migrations
+      // loadUserPosts();
+      // loadUserActivities();
+      // fetchStats();
+      // setupRealtime();
+      
+      fetchProfileData();
+
+      setLoading(false);
     }
   }, [user]);
+
+  const fetchProfileData = async () => {
+    if (!user) return;
+    try {
+      const data = await apiClient.get(`/users/${user.id}/profile-data`);
+      console.log('API FETCH PROFILE DATA:', JSON.stringify(data.user));
+      if (data && !data.error) {
+        setProfile(data.user);
+        setPosts(data.posts || []);
+        setFollowersCount(data.stats?.followers || 0);
+        setFollowingCount(data.stats?.following || 0);
+        
+        // Use fresh data to sync edit states if we are editing
+        if (data.user) {
+          setEditFullName(data.user.full_name || '');
+          setEditUsername(data.user.username || '');
+          setEditBio(data.user.bio || '');
+          setLink1Title(data.user.link_1_title || '');
+          setLink1Url(data.user.link_1_url || '');
+          setLink2Title(data.user.link_2_title || '');
+          setLink2Url(data.user.link_2_url || '');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching profile data:', err);
+    }
+  };
 
   const fetchStats = async () => {
     if (!user) return;
@@ -78,6 +128,9 @@ export const ProfileScreen = () => {
   };
 
   const setupRealtime = () => {
+    // Temporarily disabled due to custom backend migration
+    return () => {};
+    /*
     const channelId = `stats-${user?.id}-${Date.now()}`;
     const channel = supabase.channel(channelId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'follows' }, () => fetchStats())
@@ -85,26 +138,28 @@ export const ProfileScreen = () => {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
+    */
   };
 
   const loadProfile = async () => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', user?.id).single();
-    if (data) {
-      setProfile(data);
-      setEditFullName(data.full_name || '');
-      setEditUsername(data.username || '');
-      setEditBio(data.bio || '');
-      setLink1Title(data.link_1_title || '');
-      setLink1Url(data.link_1_url || '');
-      setLink2Title(data.link_2_title || '');
-      setLink2Url(data.link_2_url || '');
-    }
+    // try {
+    //   // If we had a GET /users/:id endpoint, we'd use it here. 
+    //   // For now, Auth user data usually acts as profile.
+    // } catch (e) {}
   };
 
   const loadUserPosts = async () => {
-    const { data } = await supabase.from('posts').select('*, profiles:user_id(*)').eq('user_id', user?.id).order('created_at', { ascending: false });
-    if (data) setPosts(data);
+    if (!user) return;
+    try {
+      const data = await apiClient.get(`/users/${user.id}/profile-data`);
+      if (data && data.posts) setPosts(data.posts);
+    } catch (e) {}
     setLoading(false);
+  };
+
+  const loadUserActivities = async () => {
+    const { data } = await supabase.from('activities').select('*').eq('user_id', user?.id).order('created_at', { ascending: false });
+    if (data) setActivities(data);
   };
 
   const handleLogout = async () => {
@@ -115,7 +170,7 @@ export const ProfileScreen = () => {
         style: 'destructive',
         onPress: async () => {
           setShowMenu(false);
-          await supabase.auth.signOut();
+          await logout();
         }
       }
     ]);
@@ -126,35 +181,9 @@ export const ProfileScreen = () => {
     setUsernameError('');
 
     try {
-      // 1. Check Uniqueness (except self)
-      const { data: existing } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('username', editUsername)
-        .neq('id', user?.id)
-        .maybeSingle();
-
-      if (existing) {
-        setUsernameError('هذا الاسم مستخدم مسبقاً في Nouble. اختر اسماً آخر.');
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        setSaving(false);
-        return;
-      }
-
-      // 2. 60-Day Check for Username
-      const isUsernameChanging = editUsername !== profile?.username;
-      if (isUsernameChanging && profile?.nouble_name_updated_at) {
-        const lastUpdate = new Date(profile.nouble_name_updated_at).getTime();
-        const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
-        if (Date.now() - lastUpdate < sixtyDaysMs) {
-          Alert.alert('قفل الهوية', 'لا يمكنك تغيير اسم Nouble إلا مرة واحدة كل 60 يوماً.');
-          setSaving(false);
-          return;
-        }
-      }
-
-      // 3. Update
+      // 1. Send Update to API
       const updates: any = { 
+        id: user?.id,
         full_name: editFullName, 
         username: editUsername,
         bio: editBio,
@@ -163,19 +192,22 @@ export const ProfileScreen = () => {
         link_2_title: link2Title,
         link_2_url: link2Url
       };
+
+      const updateRes = await apiClient.put('/users/update', updates);
       
-      if (isUsernameChanging) {
-        updates.nouble_name_updated_at = new Date().toISOString();
+      if (updateRes.error) {
+        throw new Error(updateRes.error);
       }
 
-      const { error } = await supabase
-        .from('profiles')
-        .update(updates)
-        .eq('id', user?.id);
+      // Update global context so other screens (like Home) reflect changes instantly
+      await updateUser({
+        full_name: editFullName,
+        username: editUsername,
+        bio: editBio
+      });
 
-      if (error) throw error;
-
-      await loadProfile();
+      // Re-fetch to update ui
+      await fetchProfileData();
       setShowEdit(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
@@ -202,34 +234,45 @@ export const ProfileScreen = () => {
     if (!user) return;
     setUploadingAvatar(true);
     try {
-      const fileName = `${user.id}-${Date.now()}.jpg`;
+      // 1. Compress & Resize the cropped image
+      const manipResult = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width: 500, height: 500 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+      );
+
+      // 2. Prepare upload payload
       const formData = new FormData();
-      formData.append('file', {
-        uri: Platform.OS === 'ios' ? uri.replace('file://', '') : uri,
-        name: fileName,
+      formData.append('user_id', user.id);
+      formData.append('upload_type', 'avatars');
+      const filename = manipResult.uri.split('/').pop() || 'avatar.jpg';
+      formData.append('media', {
+        uri: manipResult.uri,
+        name: filename,
         type: 'image/jpeg',
       } as any);
 
-      // Upload to public 'avatars' bucket
-      const { data, error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(fileName, formData);
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(fileName);
+      // 3. Send to Server (/upload endpoint expects 'media')
+      const uploadRes = await apiClient.post('/upload', formData);
       
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ avatar_url: publicUrl })
-        .eq('id', user.id);
+      if (uploadRes.urls && uploadRes.urls.length > 0) {
+        const newAvatarUrl = uploadRes.urls[0];
 
-      if (updateError) throw updateError;
-      
-      setProfile({ ...profile, avatar_url: publicUrl });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // 4. Update MySQL Database using /users/update
+        await apiClient.put('/users/update', { id: user.id, avatar_url: newAvatarUrl });
+
+        // 5. Update global context instantly (fix Home story circle)
+        await updateUser({ avatar_url: newAvatarUrl });
+
+        // 6. Sync local UI 
+        setProfile((prev: any) => ({ ...prev, avatar_url: newAvatarUrl }));
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        throw new Error('لم يستجب الخادم برابط الصورة المرفوعة.');
+      }
     } catch (err: any) {
-      Alert.alert('خطأ في الرفع', err.message);
+      console.error('Avatar upload error:', err);
+      Alert.alert('خطأ', 'فشل في رفع وتحديث الصورة الشخصية.');
     } finally {
       setUploadingAvatar(false);
     }
@@ -241,7 +284,10 @@ export const ProfileScreen = () => {
     setEditUsername(cleaned);
   };
 
-  const renderHeader = () => (
+  const renderHeader = () => {
+    const displayUser = profile || user; // fallback to stale auth user if profile not yet loaded
+
+    return (
     <View style={styles.headerContent}>
       <View style={styles.profileMain}>
         <View style={styles.statsRow}>
@@ -264,7 +310,11 @@ export const ProfileScreen = () => {
         </View>
         <View style={styles.avatarBorder}>
           <TouchableOpacity onPress={handlePickAvatar} disabled={uploadingAvatar}>
-            <Image source={{ uri: profile?.avatar_url }} style={styles.avatar} contentFit="cover" />
+            <Image 
+              source={{ uri: displayUser?.avatar_url ? getFileUrl(displayUser.avatar_url) : `https://i.pravatar.cc/150?u=${displayUser?.id || 'default'}` }} 
+              style={styles.avatar} 
+              contentFit="cover" 
+            />
             {uploadingAvatar && (
               <View style={[StyleSheet.absoluteFill, styles.avatarOverlay]}>
                 <ActivityIndicator color="#FFF" />
@@ -277,21 +327,21 @@ export const ProfileScreen = () => {
         </View>
       </View>
       
-      <Text style={styles.profileTitle}>{profile?.full_name || 'مستخدم'}</Text>
+      <Text style={styles.profileTitle}>{displayUser?.full_name || 'مستخدم'}</Text>
       
-      {profile?.bio && <Text style={styles.bioTxt}>{profile.bio}</Text>}
+      <Text style={styles.bioTxt}>{displayUser?.bio || 'لا توجد سيرة ذاتية بعد'}</Text>
 
       <View style={styles.linksRow}>
-        {profile?.link_1_url && (
-          <TouchableOpacity style={styles.linkBadge} onPress={() => Linking.openURL(profile.link_1_url)}>
+        {displayUser?.link_1_url && (
+          <TouchableOpacity style={styles.linkBadge} onPress={() => Linking.openURL(displayUser.link_1_url)}>
             <Ionicons name="link-outline" size={14} color={colors.primary} />
-            <Text style={styles.linkBadgeTxt}>{profile.link_1_title || 'رابط 1'}</Text>
+            <Text style={styles.linkBadgeTxt}>{displayUser.link_1_title || 'رابط 1'}</Text>
           </TouchableOpacity>
         )}
-        {profile?.link_2_url && (
-          <TouchableOpacity style={styles.linkBadge} onPress={() => Linking.openURL(profile.link_2_url)}>
+        {displayUser?.link_2_url && (
+          <TouchableOpacity style={[styles.linkBadge, { marginLeft: 8 }]} onPress={() => Linking.openURL(displayUser.link_2_url)}>
             <Ionicons name="link-outline" size={14} color={colors.primary} />
-            <Text style={styles.linkBadgeTxt}>{profile.link_2_title || 'رابط 2'}</Text>
+            <Text style={styles.linkBadgeTxt}>{displayUser.link_2_title || 'رابط 2'}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -301,10 +351,16 @@ export const ProfileScreen = () => {
       </TouchableOpacity>
 
       <View style={styles.tabBar}>
-        <View style={styles.tabActive}><Ionicons name="grid" size={20} color={colors.primary} /></View>
+        <TouchableOpacity style={[styles.tabContent, activeTab === 'posts' && styles.tabActive]} onPress={() => setActiveTab('posts')}>
+          <Ionicons name="grid" size={22} color={activeTab === 'posts' ? colors.primary : '#555'} />
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.tabContent, activeTab === 'activities' && styles.tabActive]} onPress={() => setActiveTab('activities')}>
+          <Ionicons name="pulse" size={24} color={activeTab === 'activities' ? colors.primary : '#555'} />
+        </TouchableOpacity>
       </View>
     </View>
-  );
+    );
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
@@ -312,28 +368,43 @@ export const ProfileScreen = () => {
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.menuBtn} onPress={() => setShowMenu(true)}>
           <Ionicons name="menu" size={28} color="#FFF" />
+        </TouchableOpacity><Text style={styles.topUsername}>@{profile?.username || user?.username || 'user'}</Text><TouchableOpacity style={styles.menuBtn} onPress={() => setShowQRView(true)}>
+          <Ionicons name="qr-code-outline" size={24} color="#FFF" />
         </TouchableOpacity>
-        <Text style={styles.topUsername}>@{profile?.username || 'nouble'}</Text>
-        <View style={{ width: 40 }} /> 
       </View>
 
-      <FlatList
-        data={posts}
-        numColumns={3}
-        ListHeaderComponent={renderHeader}
-        keyExtractor={item => item.id}
-        renderItem={({ item }) => (
-          <TouchableOpacity style={styles.postThumb} onPress={() => setSelectedPost(item)}>
-            {item.media_type === 'video' ? (
-              <GridVideoThumbnail uri={item.media_urls[0]} />
-            ) : (
-              <Image source={{ uri: item.media_urls[0] }} style={styles.thumbImage} contentFit="cover" />
-            )}
-            {item.media_type === 'video' && <View style={styles.playIcon}><Ionicons name="play" size={14} color="#FFF" /></View>}
-          </TouchableOpacity>
-        )}
-        ListEmptyComponent={!loading ? <View style={styles.empty}><Ionicons name="images-outline" size={50} color="#333" /><Text style={styles.emptyTxt}>لا توجد منشورات حتى الآن</Text></View> : null}
-      />
+      {activeTab === 'posts' ? (
+        <FlatList
+          key="posts-grid"
+          data={posts}
+          numColumns={3}
+          ListHeaderComponent={renderHeader}
+          keyExtractor={item => item.id}
+          renderItem={({ item }) => (
+            <TouchableOpacity style={styles.postThumb} onPress={() => setSelectedPost(item)}>
+              {item.media_type === 'video' ? (
+                <GridVideoThumbnail uri={getFileUrl(item.media_urls[0])} />
+              ) : (
+                <Image source={{ uri: getFileUrl(item.media_urls[0]) }} style={styles.thumbImage} contentFit="cover" />
+              )}
+              {item.media_type === 'video' && <View style={styles.playIcon}><Ionicons name="play" size={14} color="#FFF" /></View>}
+            </TouchableOpacity>
+          )}
+          ListEmptyComponent={!loading ? <View style={styles.empty}><Ionicons name="images-outline" size={50} color="#333" /><Text style={styles.emptyTxt}>لا توجد منشورات حتى الآن</Text></View> : null}
+        />
+      ) : (
+        <FlatList
+          key="activities-list"
+          data={activities}
+          ListHeaderComponent={renderHeader}
+          keyExtractor={item => item.id}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item }) => (
+            <ActivityPostCard activity={item} profile={profile} />
+          )}
+          ListEmptyComponent={!loading ? <View style={styles.empty}><Ionicons name="walk" size={50} color="#333" /><Text style={styles.emptyTxt}>لا توجد نشاطات مسجلة</Text></View> : null}
+        />
+      )}
 
       {/* Settings Menu Modal */}
       <Modal visible={showMenu} animationType="slide" transparent onRequestClose={() => setShowMenu(false)}>
@@ -342,7 +413,10 @@ export const ProfileScreen = () => {
           <View style={styles.dragHandle} />
           <Text style={styles.menuTitle}>الإعدادات والخصوصية</Text>
           
-          <TouchableOpacity style={styles.menuItem}>
+          <TouchableOpacity 
+            style={styles.menuItem} 
+            onPress={() => { setShowMenu(false); navigation.navigate('Settings'); }}
+          >
             <View style={styles.menuIconWrap}><Ionicons name="settings-outline" size={22} color="#FFF" /></View>
             <Text style={styles.menuItemTxt}>الإعدادات</Text>
           </TouchableOpacity>
@@ -387,7 +461,7 @@ export const ProfileScreen = () => {
             </View>
 
             <View style={styles.editInputGroup}>
-              <Text style={styles.inputLabel}>اسم Nouble (@)</Text>
+              <Text style={styles.inputLabel}>Nouble Name (@)</Text>
               <TextInput 
                 style={[styles.editInput, usernameError ? { borderColor: '#F44' } : {}]} 
                 value={editUsername} 
@@ -461,6 +535,14 @@ export const ProfileScreen = () => {
           type={followListType} 
         />
       )}
+
+      {profile && (
+        <ProfileQRCodeModal 
+          visible={showQRView} 
+          onClose={() => setShowQRView(false)} 
+          user={{ id: user.id, username: profile.username || profile.full_name }} 
+        />
+      )}
     </View>
   );
 }
@@ -487,8 +569,9 @@ const styles = StyleSheet.create({
   linkBadgeTxt: { color: colors.primary, fontSize: 12, fontWeight: '500' },
   editBtn: { backgroundColor: '#1A1A1A', borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginBottom: 25 },
   editBtnTxt: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
-  tabBar: { borderBottomWidth: 1, borderBottomColor: '#333', flexDirection: 'row-reverse' },
-  tabActive: { flex: 1, alignItems: 'center', paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: colors.primary },
+  tabBar: { borderBottomWidth: 1, borderBottomColor: '#222', flexDirection: 'row-reverse' },
+  tabContent: { flex: 1, alignItems: 'center', paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabActive: { borderBottomColor: colors.primary },
   postThumb: { width: COLUMN_WIDTH, height: COLUMN_WIDTH, padding: 1 },
   thumbImage: { width: '100%', height: '100%', backgroundColor: '#111' },
   playIcon: { position: 'absolute', top: 5, left: 5, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 4 },

@@ -1,15 +1,45 @@
-import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://iedsonpxnhzyrbqipzji.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllZHNvbnB4bmh6eXJicWlwemppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzOTkyNDQsImV4cCI6MjA5MDk3NTI0NH0.nRIhowpO2dbVZhNCW1O_vC_6F3HnP1G6OG6S_91YgZE';
+// 🚀 FAKE SUPABASE CLIENT
+// تم بناء هذا العميل المزيف لمنع انهيار باقي الشاشات أثناء انتقالنا إلى MySQL.
+// كل الدوال تُعيد قيماً فارغة أو دمي (Dummy) لتفادي أخطاء TypeError و undefined.
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+const createFakeBuilder = () => {
+  const builder: any = {
+    select: () => builder,
+    insert: () => builder,
+    update: () => builder,
+    delete: () => builder,
+    upsert: () => builder,
+    eq: () => builder,
+    neq: () => builder,
+    order: () => builder,
+    limit: () => builder,
+    single: async () => ({ data: null, error: null }),
+    then: (resolve: any) => resolve({ data: [], error: null })
+  };
+  return builder;
+};
+
+export const supabase = {
   auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
+    getSession: async () => ({ data: { session: null }, error: null }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+    signInWithPassword: async () => ({ data: null, error: null }),
+    signUp: async () => ({ data: null, error: null }),
+    signOut: async () => ({ error: null }),
   },
-});
+  from: (table: string) => createFakeBuilder(),
+  channel: (name: string) => ({
+    on: () => ({ subscribe: () => {} }),
+    subscribe: () => {},
+    unsubscribe: () => {}
+  }),
+  removeChannel: () => {},
+  storage: {
+    from: (bucket: string) => ({
+      upload: async () => ({ error: null }),
+      getPublicUrl: (path: string) => ({ data: { publicUrl: '' } })
+    })
+  }
+};

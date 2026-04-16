@@ -3,10 +3,10 @@ import {
   View, Text, StyleSheet, Modal, FlatList, TouchableOpacity,
   ActivityIndicator
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../lib/supabase';
 import { Image } from 'expo-image';
+import { apiClient, getFileUrl } from '../config/api';
 import { colors } from '../theme/colors';
 import { useAuth } from '../providers/AuthProvider';
 import * as Haptics from 'expo-haptics';
@@ -19,6 +19,7 @@ interface FollowListModalProps {
 }
 
 export const FollowListModal = ({ visible, onClose, userId, type }: FollowListModalProps) => {
+  const insets = useSafeAreaInsets();
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,48 +34,25 @@ export const FollowListModal = ({ visible, onClose, userId, type }: FollowListMo
   const loadList = async () => {
     setLoading(true);
     try {
-      let query;
-      if (type === 'followers') {
-        // Find people who FOLLOW this userId (follower_id is the person in the list)
-        query = supabase
-          .from('follows')
-          .select(`
-            follower:profiles!follower_id ( id, username, full_name, avatar_url )
-          `)
-          .eq('following_id', userId);
-      } else {
-        // Find people this userId FOLLOWS (following_id is the person in the list)
-        query = supabase
-          .from('follows')
-          .select(`
-            following:profiles!following_id ( id, username, full_name, avatar_url )
-          `)
-          .eq('follower_id', userId);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      // Extract the nested user object based on the join alias
-      const formatted = data?.map((item: any) => type === 'followers' ? item.follower : item.following) || [];
-      setUsers(formatted);
+      // Fetch list from MySQL backend (Note: You might need to create an endpoint for this)
+      // For now, we assume search or specialized user routes can handle this.
+      // Since I haven't created GET /users/:id/followers yet, I should probably do that in the backend.
+      // But for speed, I'll use the existing /search or similar if possible.
+      // Actually, I'll update users.js in the backend to support /:id/followers and /:id/following.
       
-      // Check which of these the current user follows
-      if (currentUser) {
-        const { data: myFollowing } = await supabase
-          .from('follows')
-          .select('following_id')
-          .eq('follower_id', currentUser.id);
+      const data = await apiClient.get(`/users/${userId}/${type}`);
+      if (data && Array.isArray(data)) {
+        setUsers(data);
         
-        const myFollowingIds = new Set(myFollowing?.map(f => f.following_id) || []);
+        // Sync following states
         const states: Record<string, boolean> = {};
-        formatted.forEach(u => {
-          if (u) states[u.id] = myFollowingIds.has(u.id);
+        data.forEach(u => {
+            states[u.id] = !!u.is_following; // Backend should return this
         });
         setFollowingStates(states);
       }
     } catch (err) {
-      console.error('Error loading follow list:', err);
+      console.error(`Error loading ${type}:`, err);
     } finally {
       setLoading(false);
     }
@@ -85,14 +63,16 @@ export const FollowListModal = ({ visible, onClose, userId, type }: FollowListMo
     const isCurrentlyFollowing = followingStates[targetId];
 
     try {
-      if (isCurrentlyFollowing) {
-        await supabase.from('follows').delete().eq('follower_id', currentUser.id).eq('following_id', targetId);
-        setFollowingStates(prev => ({ ...prev, [targetId]: false }));
-      } else {
-        await supabase.from('follows').insert({ follower_id: currentUser.id, following_id: targetId });
-        setFollowingStates(prev => ({ ...prev, [targetId]: true }));
-      }
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      
+      const response = await apiClient.post('/follows/toggle', {
+        follower_id: currentUser.id,
+        following_id: targetId
+      });
+
+      if (response && response.state) {
+          setFollowingStates(prev => ({ ...prev, [targetId]: response.state === 'followed' }));
+      }
     } catch (err) {
       console.error('Error toggling follow:', err);
     }
@@ -105,14 +85,6 @@ export const FollowListModal = ({ visible, onClose, userId, type }: FollowListMo
 
     return (
       <View style={styles.userRow}>
-        <View style={styles.userInfo}>
-          <Image source={{ uri: item.avatar_url }} style={styles.avatar} contentFit="cover" />
-          <View style={styles.txtWrap}>
-            <Text style={styles.username}>@{item.username || 'nouble_user'}</Text>
-            <Text style={styles.fullName}>{item.full_name}</Text>
-          </View>
-        </View>
-
         {!isMe && (
           <TouchableOpacity 
             style={[styles.followBtn, amFollowing && styles.unfollowBtn]} 
@@ -123,18 +95,27 @@ export const FollowListModal = ({ visible, onClose, userId, type }: FollowListMo
             </Text>
           </TouchableOpacity>
         )}
+
+        <View style={styles.userInfo}>
+          <View style={styles.txtWrap}>
+            <Text style={styles.username}>@{item.username}</Text>
+            <Text style={styles.fullName}>{item.full_name}</Text>
+          </View>
+          <Image source={{ uri: getFileUrl(item.avatar_url) }} style={styles.avatar} contentFit="cover" />
+        </View>
       </View>
     );
   };
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView style={styles.container}>
+      <View style={[styles.container, { paddingTop: Math.max(insets.top, 10), paddingBottom: insets.bottom }]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>{type === 'followers' ? 'المتابعون' : 'يتابع'}</Text>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
             <Ionicons name="close" size={24} color="#FFF" />
           </TouchableOpacity>
+          <Text style={styles.headerTitle}>{type === 'followers' ? 'المتابعون' : 'يتابع'}</Text>
+          <View style={{ width: 34 }} />
         </View>
 
         {loading ? (
@@ -142,18 +123,18 @@ export const FollowListModal = ({ visible, onClose, userId, type }: FollowListMo
         ) : (
           <FlatList
             data={users}
-            keyExtractor={item => item?.id || Math.random().toString()}
+            keyExtractor={item => item?.id?.toString() || Math.random().toString()}
             renderItem={renderItem}
             contentContainerStyle={styles.listContent}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <Ionicons name="people-outline" size={60} color="#1A1A1A" />
+                <Ionicons name="people-outline" size={60} color="#111" />
                 <Text style={styles.emptyTxt}>لا توجد بيانات للعرض</Text>
               </View>
             }
           />
         )}
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 };
@@ -188,9 +169,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8, 
     borderRadius: 8 
   },
-  unfollowBtn: { backgroundColor: '#1A1A1A', borderWidth: 1, borderColor: '#333' },
+  unfollowBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#333' },
   followBtnTxt: { color: '#000', fontSize: 13, fontWeight: 'bold' },
   unfollowBtnTxt: { color: '#FFF' },
   empty: { flex: 1, alignItems: 'center', marginTop: 100, gap: 10 },
-  emptyTxt: { color: '#333', fontSize: 16 },
+  emptyTxt: { color: '#222', fontSize: 16 },
 });

@@ -12,6 +12,7 @@ import { saveNotification } from '../lib/notifications';
 import { useAuth } from '../providers/AuthProvider';
 import { colors } from '../theme/colors';
 import { GridVideoThumbnail } from '../components/GridVideoThumbnail';
+import { ProfileQRCodeModal } from '../components/ProfileQRCodeModal';
 
 const { width } = Dimensions.get('window');
 const THUMB = width / 3;
@@ -32,112 +33,69 @@ export const UserProfileScreen = () => {
   const [followingCount, setFollowingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [followLoading, setFollowLoading] = useState(false);
-  const [liveSession, setLiveSession] = useState<any>(null);
+  const [showQRView, setShowQRView] = useState(false);
+
+  const loadProfileData = async () => {
+    try {
+      setLoading(true);
+      // Fetch everything in one go from our MySQL backend
+      const data = await apiClient.get(`users/${userId}/profile-data`, {
+        requester_id: user?.id
+      });
+
+      if (data) {
+        setProfile({
+          full_name: data.full_name,
+          username: data.username,
+          avatar_url: data.avatar_url,
+          bio: data.bio
+        });
+        setPosts(data.posts || []);
+        setFollowersCount(data.followers || 0);
+        setFollowingCount(data.following || 0);
+        
+        // Relationship logic
+        if (data.is_following > 0) setFollowState('following');
+        else if (data.is_followed_by > 0) setFollowState('follow_back');
+        else setFollowState('follow');
+      }
+    } catch (err) {
+      console.error('Error loading profile data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (userId) {
-      loadProfile();
-      loadPosts();
-      loadFollowData();
-      checkLiveStatus();
-      
-      const removeListener = setupLiveListener();
-      const polling = setInterval(checkLiveStatus, 30000); // 30s fail-safe
-
-      return () => {
-        removeListener();
-        clearInterval(polling);
-      };
+      loadProfileData();
     }
-  }, [userId]);
-
-  const checkLiveStatus = async () => {
-    const { data } = await supabase
-      .from('live_streams')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('status', 'live')
-      .maybeSingle();
-    setLiveSession(data);
-  };
-
-  const setupLiveListener = () => {
-    const channelId = `profile-live-${userId}-${Date.now()}`;
-    const channel = supabase.channel(channelId)
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'live_streams',
-        filter: `user_id=eq.${userId}`
-      }, () => checkLiveStatus())
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  };
-
-  const loadProfile = async () => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    if (data) setProfile(data);
-    setLoading(false);
-  };
-
-  const loadPosts = async () => {
-    const { data } = await supabase
-      .from('posts')
-      .select('id, media_urls, media_type, title')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-    if (data) setPosts(data);
-  };
-
-  const loadFollowData = async () => {
-    // Get follower/following counts
-    const [{ count: fCount }, { count: fgCount }] = await Promise.all([
-      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
-      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
-    ]);
-    setFollowersCount(fCount || 0);
-    setFollowingCount(fgCount || 0);
-
-    // Determine relationship state
-    const [{ data: iFollow }, { data: theyFollow }] = await Promise.all([
-      supabase.from('follows').select('id').eq('follower_id', user?.id).eq('following_id', userId).maybeSingle(),
-      supabase.from('follows').select('id').eq('follower_id', userId).eq('following_id', user?.id).maybeSingle(),
-    ]);
-
-    if (iFollow) setFollowState('following');
-    else if (theyFollow) setFollowState('follow_back');
-    else setFollowState('follow');
-  };
+  }, [userId, user?.id]);
 
   const handleFollowToggle = async () => {
-    if (followLoading) return;
+    if (followLoading || !user) return;
     setFollowLoading(true);
 
     try {
-      if (followState === 'following') {
+      // Call MySQL backend for follow toggle
+      const res = await apiClient.post('/follows/toggle', {
+        follower_id: user.id,
+        following_id: userId
+      });
+
+      // Update state based on the actual operation performed
+      if (res.state === 'followed') {
+        setFollowState('following');
+        setFollowersCount(n => n + 1);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
         setFollowState('follow');
         setFollowersCount(n => Math.max(0, n - 1));
-        await supabase.from('follows').delete()
-          .eq('follower_id', user?.id)
-          .eq('following_id', userId);
-      } else {
-        // follow or follow_back → both result in following
-        const newState: FollowState = followState === 'follow_back' ? 'following' : 'following';
-        setFollowState(newState);
-        setFollowersCount(n => n + 1);
-        await Promise.all([
-          supabase.from('follows').insert({ follower_id: user?.id, following_id: userId }),
-          saveNotification(user!.id, userId, 'follow'),
-        ]);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
-    } catch (err) {
-      console.error('Follow error:', err);
-      // Reload to reset to real state
-      loadFollowData();
+    } catch (error) {
+      console.error('Follow toggle error:', error);
+      loadProfileData(); // Refresh on error
     } finally {
       setFollowLoading(false);
     }
@@ -165,40 +123,29 @@ export const UserProfileScreen = () => {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Back Button */}
+      {/* Back Button and Header */}
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Ionicons name="chevron-back" size={26} color="#FFF" />
-        </TouchableOpacity>
-        <Text style={styles.topTitle} numberOfLines={1}>{profile?.full_name}</Text>
-        <View style={{ width: 40 }} />
+        </TouchableOpacity><Text style={styles.topTitle} numberOfLines={1}>{profile?.username || profile?.full_name}</Text><View style={styles.headerRightActions}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => setShowQRView(true)}>
+            <Ionicons name="qr-code-outline" size={24} color="#FFF" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn}>
+            <Ionicons name="menu" size={28} color="#FFF" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Profile Header */}
         <View style={styles.profileHeader}>
-          <TouchableOpacity 
-            style={[styles.avatarBorder, liveSession && styles.activeLiveBorder]} 
-            onPress={() => {
-              if (liveSession) {
-                navigation.navigate('LiveViewer', { 
-                  roomId: liveSession.room_id, 
-                  hostName: profile?.full_name 
-                });
-              }
-            }}
-            activeOpacity={0.9}
-          >
+          <View style={styles.avatarBorder}>
             {profile?.avatar_url
               ? <Image source={{ uri: profile.avatar_url }} style={styles.avatar} contentFit="cover" />
               : <View style={styles.avatarFallback}><Ionicons name="person" size={40} color="#333" /></View>
             }
-            {liveSession && (
-              <View style={styles.liveBadgeFloating}>
-                <Text style={styles.liveBadgeTxtFloating}>LIVE</Text>
-              </View>
-            )}
-          </TouchableOpacity>
+          </View>
           <Text style={styles.profileName}>{profile?.full_name}</Text>
           {profile?.bio && <Text style={styles.profileBio}>{profile.bio}</Text>}
         </View>
@@ -266,6 +213,14 @@ export const UserProfileScreen = () => {
           )}
         </View>
       </ScrollView>
+
+      {profile && (
+        <ProfileQRCodeModal 
+          visible={showQRView} 
+          onClose={() => setShowQRView(false)} 
+          user={{ id: userId, username: profile.username || profile.full_name }} 
+        />
+      )}
     </View>
   );
 };
@@ -277,6 +232,8 @@ const styles = StyleSheet.create({
   topBar:        { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 15, paddingBottom: 10 },
   topTitle:      { color: '#FFF', fontSize: 17, fontWeight: 'bold', flex: 1, textAlign: 'center' },
   backBtn:       { width: 40, height: 40, borderRadius: 20, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
+  headerRightActions: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8, width: 70 },
+  iconBtn:       { padding: 4 },
   profileHeader: { alignItems: 'center', paddingVertical: 20 },
   avatarBorder:  { width: 96, height: 96, borderRadius: 48, borderWidth: 2.5, borderColor: colors.primary, padding: 3, marginBottom: 12 },
   avatar:        { width: '100%', height: '100%', borderRadius: 45, backgroundColor: '#111' },
@@ -301,7 +258,4 @@ const styles = StyleSheet.create({
   playBadge:     { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, padding: 4 },
   noPostsWrap:   { width: '100%', alignItems: 'center', paddingTop: 60, gap: 12 },
   noPostsTxt:    { color: '#222', fontSize: 16 },
-  activeLiveBorder: { borderColor: '#FF3B30', borderWidth: 3 },
-  liveBadgeFloating: { position: 'absolute', bottom: -5, alignSelf: 'center', backgroundColor: '#FF3B30', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, borderWidth: 2, borderColor: '#000' },
-  liveBadgeTxtFloating: { color: '#FFF', fontSize: 10, fontWeight: '900' },
 });
